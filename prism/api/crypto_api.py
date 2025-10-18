@@ -105,7 +105,63 @@ class CryptoAPI:
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._cache_timestamp: Dict[str, datetime] = {}
         self._cache_duration = timedelta(minutes=5)  # Cache for 5 minutes
+        self._max_retries = 3  # Maximum number of retries for rate limiting
+        self._retry_delay = 2  # Initial delay in seconds
         logger.info("CryptoAPI initialized with timeout=%s", timeout)
+
+    def _retry_request(
+        self, url: str, params: Dict = None, method: str = "GET"
+    ) -> requests.Response:
+        """
+        Make a request with retry logic for rate limiting.
+
+        Args:
+            url: Request URL
+            params: Query parameters
+            method: HTTP method
+
+        Returns:
+            requests.Response: The response object
+
+        Raises:
+            requests.RequestException: If all retries fail
+        """
+        import time
+
+        delay = self._retry_delay
+        last_exception = None
+
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = requests.request(
+                    method, url, params=params, timeout=self.timeout
+                )
+                if response.status_code == 429:  # Rate limited
+                    if attempt < self._max_retries:
+                        logger.warning(
+                            f"Rate limited (attempt {attempt + 1}/{self._max_retries + 1}), retrying in {delay}s"
+                        )
+                        time.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        response.raise_for_status()
+                else:
+                    response.raise_for_status()
+                return response
+            except requests.RequestException as e:
+                last_exception = e
+                if attempt < self._max_retries:
+                    logger.warning(
+                        f"Request failed (attempt {attempt + 1}/{self._max_retries + 1}): {e}, retrying in {delay}s"
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(f"All retry attempts failed for {url}")
+                    raise last_exception
+
+        raise last_exception
 
     def _get_coingecko_id(self, ticker: str) -> str:
         """
@@ -168,8 +224,7 @@ class CryptoAPI:
         params = {"ids": coin_id, "vs_currencies": currency}
 
         try:
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
+            response = self._retry_request(url, params)
             data = response.json()
 
             if coin_id in data and currency in data[coin_id]:
@@ -238,8 +293,7 @@ class CryptoAPI:
             params = {"ids": ",".join(coin_ids), "vs_currencies": currency}
 
             try:
-                response = requests.get(url, params=params, timeout=self.timeout)
-                response.raise_for_status()
+                response = self._retry_request(url, params)
                 data = response.json()
 
                 for ticker in uncached_tickers:
@@ -438,8 +492,7 @@ class CryptoAPI:
         }
 
         try:
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
+            response = self._retry_request(url, params)
             logger.info(f"Successfully fetched coin info for {ticker}")
             return response.json()
 
@@ -548,8 +601,7 @@ class CryptoAPI:
         params = {"vs_currency": currency, "days": days, "interval": "daily"}
 
         try:
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
+            response = self._retry_request(url, params)
             data = response.json()
 
             if "prices" in data:

@@ -96,69 +96,123 @@ class StockAPI:
 
         normalized_ticker = self._normalize_ticker(ticker)
 
-        try:
-            stock = yf.Ticker(normalized_ticker)
-            info = stock.info
+        # Try multiple approaches for European stocks
+        tickers_to_try = [normalized_ticker]
 
-            # Try different price fields in order of preference
-            price = None
-            price_fields = [
-                "currentPrice",
-                "regularMarketPrice",
-                "previousClose",
-                "ask",
-                "bid",
-            ]
+        # For European stocks, try different variations
+        if (
+            ".PA" in normalized_ticker
+            or ".DE" in normalized_ticker
+            or ".AS" in normalized_ticker
+        ):
+            # Try without exchange suffix
+            base_ticker = normalized_ticker.split(".")[0]
+            tickers_to_try.extend(
+                [
+                    base_ticker,
+                    f"{base_ticker}.PA",  # Try Paris
+                    f"{base_ticker}.DE",  # Try Frankfurt
+                    f"{base_ticker}.AS",  # Try Amsterdam
+                ]
+            )
+        elif not "." in normalized_ticker and len(normalized_ticker) > 2:
+            # For European tickers without suffix, try common exchanges
+            tickers_to_try.extend(
+                [
+                    f"{normalized_ticker}.PA",
+                    f"{normalized_ticker}.DE",
+                    f"{normalized_ticker}.AS",
+                    f"{normalized_ticker}.L",  # London
+                    f"{normalized_ticker}.MI",  # Milan
+                ]
+            )
 
-            for field in price_fields:
-                if field in info and info[field] is not None:
-                    price = float(info[field])
-                    break
+        # Remove duplicates while preserving order
+        tickers_to_try = list(dict.fromkeys(tickers_to_try))
 
-            if price is not None:
-                # Update cache
-                self._cache[ticker] = {
-                    "price": price,
-                    "currency": info.get("currency", "EUR"),
-                    "name": info.get("shortName", ticker),
-                }
-                self._cache_timestamp[ticker] = datetime.now()
+        for attempt_ticker in tickers_to_try:
+            try:
+                logger.debug(f"Trying ticker: {attempt_ticker}")
+                stock = yf.Ticker(attempt_ticker)
+                info = stock.info
 
-                logger.info(f"Successfully fetched price for {ticker}: {price}")
-                return price
+                # Skip if info indicates delisted or invalid
+                if info and ("quoteType" in info and info["quoteType"] == "NONE"):
+                    logger.debug(f"Skipping {attempt_ticker} - appears delisted")
+                    continue
 
-            # Fallback: try to get price from history
-            hist = stock.history(period="1d")
-            if not hist.empty:
-                price = float(hist["Close"].iloc[-1])
+                # Try different price fields in order of preference
+                price = None
+                price_fields = [
+                    "currentPrice",
+                    "regularMarketPrice",
+                    "previousClose",
+                    "ask",
+                    "bid",
+                    "open",  # Last resort
+                ]
 
-                # Update cache
-                self._cache[ticker] = {
-                    "price": price,
-                    "currency": "EUR",  # Default currency
-                    "name": ticker,
-                }
-                self._cache_timestamp[ticker] = datetime.now()
+                for field in price_fields:
+                    if field in info and info[field] is not None and info[field] != 0:
+                        price = float(info[field])
+                        break
 
-                logger.info(
-                    f"Successfully fetched price (from history) for {ticker}: {price}"
-                )
-                return price
+                if price is not None and price > 0:
+                    # Update cache
+                    self._cache[ticker] = {
+                        "price": price,
+                        "currency": info.get("currency", "EUR"),
+                        "name": info.get("shortName", attempt_ticker),
+                        "used_ticker": attempt_ticker,
+                    }
+                    self._cache_timestamp[ticker] = datetime.now()
 
-            logger.warning(f"Price not found for {ticker}")
-            return None
+                    logger.info(
+                        f"Successfully fetched price for {ticker} using {attempt_ticker}: {price}"
+                    )
+                    return price
 
-        except Exception as e:
-            logger.error(f"Error fetching price for {ticker}: {e}", exc_info=False)
+                # Fallback: try to get price from recent history
+                try:
+                    hist = stock.history(period="5d", interval="1d")
+                    if not hist.empty and len(hist) >= 1:
+                        # Get the most recent close price
+                        close_prices = hist["Close"].dropna()
+                        if not close_prices.empty:
+                            price = float(close_prices.iloc[-1])
+                            if price > 0:
+                                # Update cache
+                                self._cache[ticker] = {
+                                    "price": price,
+                                    "currency": "EUR",
+                                    "name": attempt_ticker,
+                                    "used_ticker": attempt_ticker,
+                                }
+                                self._cache_timestamp[ticker] = datetime.now()
 
-            # Return cached price if available
-            if ticker in self._cache:
-                cached_data = self._cache[ticker]
-                price = cached_data.get("price")
-                logger.info(f"Returning cached price for {ticker} after error: {price}")
-                return price
+                                logger.info(
+                                    f"Successfully fetched price (from history) for {ticker} using {attempt_ticker}: {price}"
+                                )
+                                return price
+                except Exception as hist_error:
+                    logger.debug(
+                        f"History fetch failed for {attempt_ticker}: {hist_error}"
+                    )
 
-            return None
+            except Exception as e:
+                logger.debug(f"Failed to fetch {attempt_ticker}: {e}")
+                continue
+
+        logger.warning(f"All attempts failed for {ticker}. Tried: {tickers_to_try}")
+
+        # Return cached price if available (even if expired)
+        if ticker in self._cache:
+            cached_data = self._cache[ticker]
+            price = cached_data.get("price")
+            logger.info(f"Returning expired cached price for {ticker}: {price}")
+            return price
+
+        return None
 
     @log_exception
     @log_performance("stock_get_multiple_prices")
@@ -193,78 +247,10 @@ class StockAPI:
 
         # Fetch uncached tickers
         if uncached_tickers:
-            # Normalize tickers
-            normalized_tickers = [self._normalize_ticker(t) for t in uncached_tickers]
-
-            try:
-                # Use yfinance download for multiple tickers (faster)
-                tickers_str = " ".join(normalized_tickers)
-                data = yf.download(
-                    tickers_str,
-                    period="1d",
-                    progress=False,
-                    show_errors=False,
-                    threads=True,
-                )
-
-                # Handle single ticker case
-                if len(uncached_tickers) == 1:
-                    ticker = uncached_tickers[0]
-                    if not data.empty and "Close" in data.columns:
-                        price = float(data["Close"].iloc[-1])
-                        results[ticker] = price
-
-                        # Update cache
-                        self._cache[ticker] = {
-                            "price": price,
-                            "currency": "EUR",
-                            "name": ticker,
-                        }
-                        self._cache_timestamp[ticker] = datetime.now()
-                    else:
-                        results[ticker] = None
-                else:
-                    # Multiple tickers
-                    for i, ticker in enumerate(uncached_tickers):
-                        try:
-                            if not data.empty and "Close" in data.columns:
-                                # Extract price for this ticker
-                                if isinstance(data["Close"], pd.DataFrame):
-                                    normalized = normalized_tickers[i]
-                                    if normalized in data["Close"].columns:
-                                        price = float(
-                                            data["Close"][normalized].iloc[-1]
-                                        )
-                                    else:
-                                        price = None
-                                else:
-                                    price = float(data["Close"].iloc[-1])
-
-                                if price is not None:
-                                    results[ticker] = price
-
-                                    # Update cache
-                                    self._cache[ticker] = {
-                                        "price": price,
-                                        "currency": "EUR",
-                                        "name": ticker,
-                                    }
-                                    self._cache_timestamp[ticker] = datetime.now()
-                                else:
-                                    results[ticker] = None
-                            else:
-                                results[ticker] = None
-                        except Exception as e:
-                            print(f"Error processing {ticker}: {e}")
-                            results[ticker] = None
-
-            except Exception as e:
-                print(f"Error fetching prices: {e}")
-
-                # Fallback: fetch individually
-                for ticker in uncached_tickers:
-                    price = self.get_price(ticker, use_cache=False)
-                    results[ticker] = price
+            # Fallback: fetch individually to avoid yfinance download issues
+            for ticker in uncached_tickers:
+                price = self.get_price(ticker, use_cache=False)
+                results[ticker] = price
 
         return results
 
