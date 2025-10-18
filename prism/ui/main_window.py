@@ -27,7 +27,7 @@ from ..database.db_manager import DatabaseManager
 from ..api.crypto_api import CryptoAPI
 from ..api.stock_api import StockAPI
 from ..utils.logger import get_logger, log_exception
-from .themes import ThemeManager, Theme
+from .theme_manager import theme_manager
 from .tooltips import Tooltips
 from .personal_tab import PersonalTab
 from .investments_tab import InvestmentsTab
@@ -59,7 +59,6 @@ class MainWindow(QMainWindow):
             self.db = DatabaseManager()
             self.crypto_api = CryptoAPI()
             self.stock_api = StockAPI()
-            self.theme_manager = ThemeManager()
             logger.info("All components initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize components: {e}")
@@ -453,7 +452,7 @@ class MainWindow(QMainWindow):
         try:
             self.settings_tab = SettingsTab(self.db)
             self.settings_tab.settings_changed.connect(self._on_settings_changed)
-            self.settings_tab.theme_changed.connect(self._toggle_theme)
+            self.settings_tab.theme_changed.connect(self._set_theme)
             self.content_stack.addWidget(self.settings_tab)
             logger.debug("Settings page created")
         except Exception as e:
@@ -469,17 +468,25 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self):
         """Apply the current theme to the application."""
-        stylesheet = self.theme_manager.get_stylesheet()
+        theme_name = self.settings_tab.get_setting("appearance/theme", "finary_dark")
+        theme_manager.set_theme(theme_name)
+        stylesheet = theme_manager.get_stylesheet()
         self.setStyleSheet(stylesheet)
-        logger.debug("Theme applied")
+        logger.debug(f"Theme {theme_name} applied")
+
+    def _set_theme(self, theme_name: str):
+        """Set the application theme."""
+        theme_manager.set_theme(theme_name)
+        self.settings_tab.settings.setValue("appearance/theme", theme_name)
+        self._apply_theme()
+        self.status_bar.showMessage(f"Switched to {theme_name} theme", 3000)
+        logger.info(f"Theme switched to {theme_name}")
 
     def _toggle_theme(self):
         """Toggle between light and dark themes."""
-        new_theme = self.theme_manager.toggle_theme()
-        self._apply_theme()
-        theme_name = "Dark" if new_theme == Theme.DARK else "Light"
-        self.status_bar.showMessage(f"Switched to {theme_name} theme", 3000)
-        logger.info(f"Theme toggled to {theme_name}")
+        current_theme = self.settings_tab.get_setting("appearance/theme", "finary_dark")
+        new_theme = "finary_light" if current_theme == "finary_dark" else "finary_dark"
+        self._set_theme(new_theme)
 
     def _center_window(self):
         """Center the window on the screen."""
@@ -556,7 +563,7 @@ class MainWindow(QMainWindow):
         """Handle CSV import action."""
         logger.info("CSV import action triggered")
         try:
-            dialog = CSVImportDialog(self.db_manager, self)
+            dialog = CSVImportDialog(self.db, self)
             dialog.exec()
         except Exception as e:
             logger.error(f"Failed to open CSV import dialog: {e}")
@@ -569,7 +576,7 @@ class MainWindow(QMainWindow):
         """Handle recurring transactions management."""
         logger.info("Recurring transactions dialog triggered")
         try:
-            dialog = RecurringDialog(self.db_manager, self)
+            dialog = RecurringDialog(self.db, self)
             dialog.data_changed.connect(self._refresh_ui)
             dialog.exec()
         except Exception as e:
@@ -585,7 +592,7 @@ class MainWindow(QMainWindow):
         """Handle categories and budget management."""
         logger.info("Categories management dialog triggered")
         try:
-            dialog = CategoriesDialog(self.db_manager, self)
+            dialog = CategoriesDialog(self.db, self)
             dialog.data_changed.connect(self._refresh_ui)
             dialog.exec()
         except Exception as e:
@@ -616,7 +623,7 @@ class MainWindow(QMainWindow):
 
             if file_path:
                 # Generate report
-                generator = PDFReportGenerator(self.db_manager)
+                generator = PDFReportGenerator(self.db)
                 generator.generate_full_report(file_path)
 
                 QMessageBox.information(

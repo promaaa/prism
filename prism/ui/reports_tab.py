@@ -17,8 +17,8 @@ from PyQt6.QtWidgets import (
     QFrame,
     QScrollArea,
     QDateEdit,
-    QGroupBox,
     QSplitter,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QDate, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -27,14 +27,17 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
+import plotly.io as pio
 
 from ..database.db_manager import DatabaseManager
+from ..utils.portfolio_evolution import calculate_true_portfolio_evolution
 from ..utils.exports import (
     export_transactions_to_csv,
     export_assets_to_csv,
     export_orders_to_csv,
     get_default_export_path,
 )
+from . import finary_themes  # Import the new theme
 
 
 class ReportsTab(QWidget):
@@ -94,13 +97,13 @@ class ReportsTab(QWidget):
         # Splitter for charts (allows resizing)
         self.chart_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # Personal Finance Charts Section
-        self.personal_charts_widget = self._create_personal_charts_section()
-        self.chart_splitter.addWidget(self.personal_charts_widget)
+        # Stock Charts Section
+        self.stock_charts_widget = self._create_stock_charts_section()
+        self.chart_splitter.addWidget(self.stock_charts_widget)
 
-        # Investment Charts Section
-        self.investment_charts_widget = self._create_investment_charts_section()
-        self.chart_splitter.addWidget(self.investment_charts_widget)
+        # Crypto Charts Section
+        self.crypto_charts_widget = self._create_crypto_charts_section()
+        self.chart_splitter.addWidget(self.crypto_charts_widget)
 
         layout.addWidget(self.chart_splitter, 1)
 
@@ -109,8 +112,23 @@ class ReportsTab(QWidget):
 
     def _create_control_panel(self) -> QWidget:
         """Create control panel with filters and export options."""
-        panel = QGroupBox("Controls")
-        layout = QHBoxLayout(panel)
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(8)
+
+        # Controls title
+        controls_title = QLabel("Controls")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        controls_title.setFont(title_font)
+        panel_layout.addWidget(controls_title)
+
+        # Controls container
+        controls_container = QWidget()
+        layout = QHBoxLayout(controls_container)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
 
         # Date range filter
@@ -166,41 +184,56 @@ class ReportsTab(QWidget):
         self.export_orders_btn.clicked.connect(self._export_orders)
         layout.addWidget(self.export_orders_btn)
 
+        panel_layout.addWidget(controls_container)
         return panel
 
-    def _create_personal_charts_section(self) -> QWidget:
-        """Create personal finance charts section."""
-        section = QGroupBox("Personal Finance Analytics")
-        layout = QHBoxLayout(section)
+    def _create_stock_charts_section(self) -> QWidget:
+        """Create stock investment charts section."""
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        # Balance evolution chart
-        self.balance_chart_view = QWebEngineView()
-        self.balance_chart_view.setMinimumHeight(300)
-        layout.addWidget(self.balance_chart_view, 2)
+        # Section title
+        title_label = QLabel("PEA (Stocks) Analytics")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
 
-        # Category breakdown chart
-        self.category_chart_view = QWebEngineView()
-        self.category_chart_view.setMinimumHeight(300)
-        layout.addWidget(self.category_chart_view, 1)
+        # Stock evolution chart
+        self.stock_chart_view = QWebEngineView()
+        self.stock_chart_view.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.stock_chart_view.setMinimumHeight(350)
+        layout.addWidget(self.stock_chart_view)
 
         return section
 
-    def _create_investment_charts_section(self) -> QWidget:
-        """Create investment charts section."""
-        section = QGroupBox("Investment Portfolio Analytics")
-        layout = QHBoxLayout(section)
+    def _create_crypto_charts_section(self) -> QWidget:
+        """Create crypto investment charts section."""
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        # Portfolio value evolution chart
-        self.portfolio_chart_view = QWebEngineView()
-        self.portfolio_chart_view.setMinimumHeight(300)
-        layout.addWidget(self.portfolio_chart_view, 2)
+        # Section title
+        title_label = QLabel("Crypto Investments Analytics")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
 
-        # Asset allocation chart
-        self.allocation_chart_view = QWebEngineView()
-        self.allocation_chart_view.setMinimumHeight(300)
-        layout.addWidget(self.allocation_chart_view, 1)
+        # Crypto evolution chart
+        self.crypto_chart_view = QWebEngineView()
+        self.crypto_chart_view.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.crypto_chart_view.setMinimumHeight(350)
+        layout.addWidget(self.crypto_chart_view)
 
         return section
 
@@ -271,224 +304,92 @@ class ReportsTab(QWidget):
         """Refresh all charts with current data."""
         try:
             # Get data from database
-            transactions = self.db.get_all_transactions()
             assets = self.db.get_all_assets()
 
-            # Filter by date range
-            transactions = self._filter_transactions_by_date(transactions)
-
             # Generate charts
-            self._create_balance_chart(transactions)
-            self._create_category_chart(transactions)
-            self._create_portfolio_chart(assets)
-            self._create_allocation_chart(assets)
+            self._create_stock_evolution_chart(assets)
+            self._create_crypto_evolution_chart(assets)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to generate charts:\n{str(e)}")
 
-    def _create_balance_chart(self, transactions: List[Dict[str, Any]]):
-        """Create balance evolution line chart."""
-        if not transactions:
-            # Show empty state
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No transaction data available",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=16, color="#999"),
+    def _create_stock_evolution_chart(self, assets: List[Dict[str, Any]]):
+        """Create stock investment evolution line chart."""
+        stock_assets = [a for a in assets if a["asset_type"] == "stock"]
+
+        if not stock_assets:
+            self._show_empty_chart(
+                self.stock_chart_view,
+                "No stock investment data available",
+                "Stock Investment Evolution (PEA)",
             )
-            fig.update_layout(
-                title="Balance Evolution",
-                xaxis=dict(showgrid=False, showticklabels=False),
-                yaxis=dict(showgrid=False, showticklabels=False),
-                height=300,
-            )
-            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": False})
-            self.balance_chart_view.setHtml(html)
             return
 
-        # Sort by date
-        sorted_transactions = sorted(transactions, key=lambda x: x.get("date", ""))
+        start_date, end_date = self._get_date_range()
 
-        # Calculate cumulative balance
-        dates = []
-        balances = []
-        running_balance = 0
-
-        for trans in sorted_transactions:
-            date = trans.get("date", "")
-            amount = trans.get("amount", 0)
-            running_balance += amount
-            dates.append(date)
-            balances.append(running_balance)
-
-        # Create line chart
-        fig = go.Figure()
-
-        fig.add_trace(
-            go.Scatter(
-                x=dates,
-                y=balances,
-                mode="lines+markers",
-                name="Balance",
-                line=dict(color="#4CAF50", width=3),
-                marker=dict(size=6),
-                fill="tozeroy",
-                fillcolor="rgba(76, 175, 80, 0.1)",
-            )
+        # Calculate TRUE portfolio evolution based on purchase dates
+        portfolio_evolution = calculate_true_portfolio_evolution(
+            stock_assets, self.db.get_historical_prices, start_date, end_date
         )
 
-        fig.update_layout(
-            title="Balance Evolution Over Time",
-            xaxis_title="Date",
-            yaxis_title="Balance (€)",
-            hovermode="x unified",
-            height=300,
-            template="plotly_white",
-            showlegend=False,
-        )
-
-        html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
-        self.balance_chart_view.setHtml(html)
-
-    def _create_category_chart(self, transactions: List[Dict[str, Any]]):
-        """Create expense/revenue breakdown pie chart."""
-        if not transactions:
-            # Show empty state
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No transaction data available",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=16, color="#999"),
+        # If no historical data, show current value
+        if not portfolio_evolution:
+            current_value = sum(
+                asset["quantity"]
+                * (asset.get("current_price") or asset.get("price_buy", 0))
+                for asset in stock_assets
             )
-            fig.update_layout(
-                title="Category Breakdown",
-                height=300,
-            )
-            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": False})
-            self.category_chart_view.setHtml(html)
-            return
 
-        # Group by category
-        category_totals = {}
-        for trans in transactions:
-            category = trans.get("category", "Uncategorized")
-            amount = abs(trans.get("amount", 0))  # Use absolute values
+            if current_value > 0:
+                from datetime import datetime
 
-            if category in category_totals:
-                category_totals[category] += amount
-            else:
-                category_totals[category] = amount
+                today = datetime.now().strftime("%Y-%m-%d")
 
-        if not category_totals:
-            # Show empty state
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No category data available",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=16, color="#999"),
-            )
-            fig.update_layout(title="Category Breakdown", height=300)
-            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": False})
-            self.category_chart_view.setHtml(html)
-            return
-
-        # Create pie chart
-        labels = list(category_totals.keys())
-        values = list(category_totals.values())
-
-        fig = go.Figure(
-            data=[
-                go.Pie(
-                    labels=labels,
-                    values=values,
-                    hole=0.3,
-                    marker=dict(
-                        colors=px.colors.qualitative.Set3,
-                        line=dict(color="white", width=2),
-                    ),
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=[today],
+                        y=[current_value],
+                        mode="markers+text",
+                        name="Current Value",
+                        marker=dict(color="#007AFF", size=15),
+                        text=[f"€{current_value:,.2f}"],
+                        textposition="top center",
+                        hovertemplate="<b>Today</b><br>€%{y:,.2f}<extra></extra>",
+                    )
                 )
-            ]
-        )
 
-        fig.update_layout(
-            title="Spending by Category",
-            height=300,
-            showlegend=True,
-            legend=dict(
-                orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02
-            ),
-        )
+                fig.update_layout(
+                    title="Stock Portfolio Current Value (PEA)<br><sub>💡 Tip: Update prices in Investments tab to see evolution chart</sub>",
+                    xaxis_title="Date",
+                    yaxis_title="Value (€)",
+                    showlegend=False,
+                    height=350,
+                    margin=dict(t=70, l=10, r=10, b=40),
+                )
 
-        html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
-        self.category_chart_view.setHtml(html)
-
-    def _create_portfolio_chart(self, assets: List[Dict[str, Any]]):
-        """Create portfolio value evolution chart."""
-        if not assets:
-            # Show empty state
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No investment data available",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=16, color="#999"),
-            )
-            fig.update_layout(
-                title="Portfolio Value Over Time",
-                xaxis=dict(showgrid=False, showticklabels=False),
-                yaxis=dict(showgrid=False, showticklabels=False),
-                height=300,
-            )
-            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": False})
-            self.portfolio_chart_view.setHtml(html)
+                html = fig.to_html(
+                    include_plotlyjs="cdn", config={"displayModeBar": True}
+                )
+                self.stock_chart_view.setHtml(html)
+            else:
+                self._show_empty_chart(
+                    self.stock_chart_view,
+                    "No historical price data available.<br><br>"
+                    "📊 <b>How to fix this:</b><br>"
+                    "1. Go to <b>Investments</b> tab<br>"
+                    "2. Click <b>Update Prices</b> button<br>"
+                    "3. Wait for prices to update<br>"
+                    "4. Come back here and click <b>Refresh All</b><br><br>"
+                    "Historical prices will be fetched automatically.",
+                    "Stock Investment Evolution (PEA)",
+                )
             return
 
-        # Group assets by purchase date and calculate cumulative value
-        date_values = {}
-
-        for asset in assets:
-            date = asset.get("date_buy", "")
-            quantity = asset.get("quantity", 0)
-            current_price = asset.get("current_price", 0)
-            value = quantity * current_price
-
-            if date in date_values:
-                date_values[date] += value
-            else:
-                date_values[date] = value
-
-        # Sort by date
-        sorted_dates = sorted(date_values.keys())
-        dates = []
-        values = []
-        cumulative_value = 0
-
-        for date in sorted_dates:
-            cumulative_value += date_values[date]
-            dates.append(date)
-            values.append(cumulative_value)
-
-        # Add current date with current total portfolio value
-        current_value = sum(
-            asset.get("quantity", 0) * asset.get("current_price", 0) for asset in assets
-        )
-        dates.append(datetime.now().strftime("%Y-%m-%d"))
-        values.append(current_value)
+        # Sort the dates and create the lists for the chart
+        sorted_dates = sorted(portfolio_evolution.keys())
+        dates = sorted_dates
+        values = [portfolio_evolution[date] for date in sorted_dates]
 
         # Create line chart
         fig = go.Figure()
@@ -497,113 +398,134 @@ class ReportsTab(QWidget):
             go.Scatter(
                 x=dates,
                 y=values,
-                mode="lines+markers",
-                name="Portfolio Value",
-                line=dict(color="#2196F3", width=3),
-                marker=dict(size=6),
+                mode="lines",
+                name="Stock Value",
+                line=dict(color="#007AFF", width=3),
                 fill="tozeroy",
-                fillcolor="rgba(33, 150, 243, 0.1)",
+                fillcolor="rgba(0, 122, 255, 0.2)",
+                hovertemplate="<b>%{x}</b><br>€%{y:,.2f}<extra></extra>",
             )
         )
 
         fig.update_layout(
-            title="Portfolio Value Evolution",
+            title="Stock Investment Evolution (PEA)<br><sub>Shows actual portfolio value based on purchase dates</sub>",
             xaxis_title="Date",
             yaxis_title="Value (€)",
             hovermode="x unified",
-            height=300,
-            template="plotly_white",
-            showlegend=False,
+            autosize=True,
+            height=350,
+            margin=dict(t=70, l=10, r=10, b=40),
         )
 
         html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
-        self.portfolio_chart_view.setHtml(html)
+        self.stock_chart_view.setHtml(html)
 
-    def _create_allocation_chart(self, assets: List[Dict[str, Any]]):
-        """Create asset allocation pie chart."""
-        if not assets:
-            # Show empty state
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No investment data available",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=16, color="#999"),
+    def _create_crypto_evolution_chart(self, assets: List[Dict[str, Any]]):
+        """Create crypto investment evolution line chart."""
+        crypto_assets = [a for a in assets if a["asset_type"] == "crypto"]
+
+        if not crypto_assets:
+            self._show_empty_chart(
+                self.crypto_chart_view,
+                "No crypto investment data available",
+                "Crypto Investment Evolution",
             )
-            fig.update_layout(title="Asset Allocation", height=300)
-            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": False})
-            self.allocation_chart_view.setHtml(html)
             return
 
-        # Group by asset type
-        type_values = {}
+        start_date, end_date = self._get_date_range()
 
-        for asset in assets:
-            asset_type = asset.get("asset_type", "Unknown").upper()
-            quantity = asset.get("quantity", 0)
-            current_price = asset.get("current_price", 0)
-            value = quantity * current_price
+        # Calculate TRUE portfolio evolution based on purchase dates
+        portfolio_evolution = calculate_true_portfolio_evolution(
+            crypto_assets, self.db.get_historical_prices, start_date, end_date
+        )
 
-            if asset_type in type_values:
-                type_values[asset_type] += value
-            else:
-                type_values[asset_type] = value
-
-        if not type_values:
-            # Show empty state
-            fig = go.Figure()
-            fig.add_annotation(
-                text="No allocation data available",
-                xref="paper",
-                yref="paper",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(size=16, color="#999"),
+        # If no historical data, show current value
+        if not portfolio_evolution:
+            current_value = sum(
+                asset["quantity"]
+                * (asset.get("current_price") or asset.get("price_buy", 0))
+                for asset in crypto_assets
             )
-            fig.update_layout(title="Asset Allocation", height=300)
-            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": False})
-            self.allocation_chart_view.setHtml(html)
-            return
 
-        # Create pie chart
-        labels = list(type_values.keys())
-        values = list(type_values.values())
+            if current_value > 0:
+                from datetime import datetime
 
-        colors = {
-            "CRYPTO": "#FF9800",
-            "STOCK": "#2196F3",
-            "BOND": "#4CAF50",
-        }
-        chart_colors = [colors.get(label, "#9C27B0") for label in labels]
+                today = datetime.now().strftime("%Y-%m-%d")
 
-        fig = go.Figure(
-            data=[
-                go.Pie(
-                    labels=labels,
-                    values=values,
-                    hole=0.4,
-                    marker=dict(colors=chart_colors, line=dict(color="white", width=2)),
-                    textinfo="label+percent",
-                    textfont=dict(size=14),
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=[today],
+                        y=[current_value],
+                        mode="markers+text",
+                        name="Current Value",
+                        marker=dict(color="#FF9500", size=15),
+                        text=[f"€{current_value:,.2f}"],
+                        textposition="top center",
+                        hovertemplate="<b>Today</b><br>€%{y:,.2f}<extra></extra>",
+                    )
                 )
-            ]
+
+                fig.update_layout(
+                    title="Crypto Portfolio Current Value<br><sub>💡 Tip: Update prices in Investments tab to see evolution chart</sub>",
+                    xaxis_title="Date",
+                    yaxis_title="Value (€)",
+                    showlegend=False,
+                    height=350,
+                    margin=dict(t=70, l=10, r=10, b=40),
+                )
+
+                html = fig.to_html(
+                    include_plotlyjs="cdn", config={"displayModeBar": True}
+                )
+                self.crypto_chart_view.setHtml(html)
+            else:
+                self._show_empty_chart(
+                    self.crypto_chart_view,
+                    "No historical price data available.<br><br>"
+                    "📊 <b>How to fix this:</b><br>"
+                    "1. Go to <b>Investments</b> tab<br>"
+                    "2. Click <b>Update Prices</b> button<br>"
+                    "3. Wait for prices to update<br>"
+                    "4. Come back here and click <b>Refresh All</b><br><br>"
+                    "Historical prices will be fetched automatically.",
+                    "Crypto Investment Evolution",
+                )
+            return
+
+        # Sort the dates and create the lists for the chart
+        sorted_dates = sorted(portfolio_evolution.keys())
+        dates = sorted_dates
+        values = [portfolio_evolution[date] for date in sorted_dates]
+
+        # Create line chart
+        fig = go.Figure()
+
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=values,
+                mode="lines",
+                name="Crypto Value",
+                line=dict(color="#FF9500", width=3),
+                fill="tozeroy",
+                fillcolor="rgba(255, 149, 0, 0.2)",
+                hovertemplate="<b>%{x}</b><br>€%{y:,.2f}<extra></extra>",
+            )
         )
 
         fig.update_layout(
-            title="Portfolio Allocation by Asset Type",
-            height=300,
-            showlegend=True,
-            legend=dict(
-                orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02
-            ),
+            title="Crypto Investment Evolution<br><sub>Shows actual portfolio value based on purchase dates</sub>",
+            xaxis_title="Date",
+            yaxis_title="Value (€)",
+            hovermode="x unified",
+            autosize=True,
+            height=350,
+            margin=dict(t=70, l=10, r=10, b=40),
         )
 
         html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
-        self.allocation_chart_view.setHtml(html)
+        self.crypto_chart_view.setHtml(html)
 
     def _export_transactions(self):
         """Export transactions to CSV."""

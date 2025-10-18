@@ -544,11 +544,13 @@ class DatabaseManager:
 
         # Get current values
         cursor.execute("SELECT * FROM assets WHERE id = ?", (asset_id,))
-        current = cursor.fetchone()
+        current_row = cursor.fetchone()
 
-        if not current:
+        if not current_row:
             conn.close()
             return False
+
+        current = dict(current_row)
 
         # Use new values if provided, otherwise keep current
         new_ticker = ticker if ticker is not None else current["ticker"]
@@ -664,14 +666,31 @@ class DatabaseManager:
 
     def get_portfolio_summary(self) -> Dict[str, Any]:
         """
-        Get portfolio summary with allocation by asset type.
+        Get portfolio summary with total_cost, total_gain, and allocation by asset type.
 
         Returns:
-            Dict: Portfolio summary with total value and allocation
+            Dict: Portfolio summary with total_cost, total_gain, total_value, and allocation
         """
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # Get total cost, current value, and gain/loss
+        cursor.execute(
+            """
+            SELECT
+                SUM(quantity * price_buy) as total_cost,
+                SUM(quantity * COALESCE(current_price, price_buy)) as total_value
+            FROM assets
+            """
+        )
+
+        summary_row = cursor.fetchone()
+        summary_dict = dict(summary_row) if summary_row else {}
+        total_cost = summary_dict.get("total_cost", 0.0) or 0.0
+        total_value = summary_dict.get("total_value", 0.0) or 0.0
+        total_gain = total_value - total_cost
+
+        # Get allocation by asset type
         cursor.execute(
             """
             SELECT
@@ -687,9 +706,13 @@ class DatabaseManager:
         conn.close()
 
         allocation = [dict(row) for row in rows]
-        total_value = sum(item["value"] for item in allocation)
 
-        return {"total_value": total_value, "allocation": allocation}
+        return {
+            "total_cost": total_cost,
+            "total_gain": total_gain,
+            "total_value": total_value,
+            "allocation": allocation,
+        }
 
     def get_asset_performance(self, asset_id: int) -> Dict[str, Any]:
         """
@@ -719,6 +742,91 @@ class DatabaseManager:
             "gain_loss": gain_loss,
             "gain_loss_percent": gain_loss_percent,
         }
+
+    # ==================== HISTORICAL PRICES ====================
+
+    @log_exception
+    def add_historical_prices(self, asset_id: int, prices: List[Tuple[str, float]]):
+        """
+        Add historical prices for an asset.
+
+        Args:
+            asset_id: The ID of the asset
+            prices: A list of (date, price) tuples
+        """
+        logger.debug(f"Adding {len(prices)} historical prices for asset {asset_id}")
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.executemany(
+            "INSERT OR REPLACE INTO historical_prices (asset_id, date, price) VALUES (?, ?, ?)",
+            [(asset_id, date, price) for date, price in prices],
+        )
+
+        conn.commit()
+        conn.close()
+
+    @log_exception
+    def get_historical_prices(
+        self,
+        asset_id: int,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get historical prices for an asset.
+
+        Args:
+            asset_id: The ID of the asset
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+
+        Returns:
+            A list of historical price dictionaries
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM historical_prices WHERE asset_id = ?"
+        params = [asset_id]
+
+        if start_date:
+            query += " AND date >= ?"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND date <= ?"
+            params.append(end_date)
+
+        query += " ORDER BY date ASC"
+
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    @log_exception
+    def get_last_historical_price_date(self, asset_id: int) -> Optional[str]:
+        """
+        Get the last date for which a historical price is available for an asset.
+
+        Args:
+            asset_id: The ID of the asset
+
+        Returns:
+            The most recent date as a string, or None if no historical price is available
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT MAX(date) FROM historical_prices WHERE asset_id = ?", (asset_id,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        return row[0] if row and row[0] else None
 
     # ==================== ORDERS ====================
 
@@ -769,21 +877,14 @@ class DatabaseManager:
             INSERT INTO orders (ticker, quantity, price, order_type, date, status)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (ticker, quantity, price, order_type, date, status),
+            (ticker, quantity, price, order_type, order_date, status),
         )
 
         order_id = cursor.lastrowid
         conn.commit()
         conn.close()
 
-        logger.info(f"Order ID {order_id} deleted successfully")
-
-        logger.info(f"Order ID {order_id} updated successfully")
-
-        logger.info(f"Asset ID {asset_id} deleted successfully")
-
-        logger.info(f"Asset ID {asset_id} updated successfully")
-
+        logger.info(f"Order added successfully with ID: {order_id}")
         return order_id
 
     def get_order(self, order_id: int) -> Optional[Dict[str, Any]]:

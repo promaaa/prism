@@ -77,8 +77,29 @@ def initialize_database(db_path: Optional[Path] = None) -> None:
             order_type TEXT NOT NULL CHECK(order_type IN ('buy', 'sell')),
             date TEXT NOT NULL,
             status TEXT NOT NULL CHECK(status IN ('open', 'closed')),
+            asset_id INTEGER,
+            asset_type TEXT CHECK(asset_type IN ('crypto', 'stock', 'bond')),
+            price_currency TEXT DEFAULT 'EUR' CHECK(price_currency IN ('USD', 'EUR')),
+            gain_loss REAL,
+            notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE SET NULL
+        )
+    """)
+
+    # Create Portfolio Cash table (track cash from sales)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS portfolio_cash (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'EUR' CHECK(currency IN ('USD', 'EUR')),
+            source TEXT,
+            date TEXT NOT NULL,
+            related_order_id INTEGER,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (related_order_id) REFERENCES orders (id) ON DELETE SET NULL
         )
     """)
 
@@ -175,6 +196,38 @@ def initialize_database(db_path: Optional[Path] = None) -> None:
     """)
 
     cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_orders_type
+        ON orders(order_type)
+    """)
+
+    # Check if asset_id column exists before creating index
+    cursor.execute("PRAGMA table_info(orders)")
+    orders_columns = [row[1] for row in cursor.fetchall()]
+
+    if "asset_id" in orders_columns:
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_orders_asset_id
+            ON orders(asset_id)
+        """)
+
+    # Check if portfolio_cash table exists before creating indexes
+    cursor.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='portfolio_cash'
+    """)
+
+    if cursor.fetchone():
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_portfolio_cash_date
+            ON portfolio_cash(date)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_portfolio_cash_currency
+            ON portfolio_cash(currency)
+        """)
+
+    cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_categories_name
         ON categories(name)
     """)
@@ -197,6 +250,22 @@ def initialize_database(db_path: Optional[Path] = None) -> None:
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_recurring_active
         ON recurring_transactions(is_active)
+    """)
+
+    # Create Historical Prices table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS historical_prices (
+            asset_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            price REAL NOT NULL,
+            FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE,
+            PRIMARY KEY (asset_id, date)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_historical_prices_asset_id_date
+        ON historical_prices(asset_id, date)
     """)
 
     # Create trigger to update updated_at timestamp for transactions
@@ -249,6 +318,18 @@ def initialize_database(db_path: Optional[Path] = None) -> None:
         END
     """)
 
+    # Initialize portfolio cash with 0 if empty (only if table exists)
+    cursor.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='portfolio_cash'
+    """)
+
+    if cursor.fetchone():
+        cursor.execute("""
+            INSERT OR IGNORE INTO portfolio_cash (id, amount, currency, source, date)
+            VALUES (1, 0, 'EUR', 'Initial', date('now'))
+        """)
+
     conn.commit()
     conn.close()
 
@@ -268,10 +349,12 @@ def drop_all_tables(db_path: Optional[Path] = None) -> None:
     cursor = conn.cursor()
 
     cursor.execute("DROP TABLE IF EXISTS transactions")
-    cursor.execute("DROP TABLE IF EXISTS assets")
     cursor.execute("DROP TABLE IF EXISTS orders")
+    cursor.execute("DROP TABLE IF EXISTS assets")
     cursor.execute("DROP TABLE IF EXISTS categories")
     cursor.execute("DROP TABLE IF EXISTS recurring_transactions")
+    cursor.execute("DROP TABLE IF EXISTS historical_prices")
+    cursor.execute("DROP TABLE IF EXISTS portfolio_cash")
 
     conn.commit()
     conn.close()
@@ -284,7 +367,7 @@ def get_schema_version() -> str:
     Returns:
         str: Schema version string
     """
-    return "1.2.0"
+    return "1.3.0"
 
 
 if __name__ == "__main__":

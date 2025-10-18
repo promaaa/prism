@@ -111,20 +111,36 @@ dmypy.json
 ehthumbs.db
 Thumbs.db
 
-# Agent-related markdown files
-Prism-App-Initial-Brief.markdown
-COMPLETION_SUMMARY.md
-DEVELOPMENT.md
-PROGRESS.md
-BUGFIXES.md
-RELEASE_NOTES.md
-USER_GUIDE.md
-ARCHITECTURE.md
-TICKER_QUICK_REFERENCE.md
-docs/LOGGING_GUIDE.md
-docs/TICKER_AUTOCOMPLETE.md
+# Database files (contains user data - DO NOT COMMIT)
+*.db
+*.sqlite
+*.sqlite3
 
-# Ignore all markdown files except README.md and QUICKSTART.md
+# Export files
+*.csv
+*.xlsx
+*.json
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+
+# Agent-related markdown files (already cleaned up)
+# Prism-App-Initial-Brief.markdown
+# COMPLETION_SUMMARY.md
+# DEVELOPMENT.md
+# PROGRESS.md
+# BUGFIXES.md
+# RELEASE_NOTES.md
+# USER_GUIDE.md
+# ARCHITECTURE.md
+# TICKER_QUICK_REFERENCE.md
+# docs/LOGGING_GUIDE.md
+# docs/TICKER_AUTOCOMPLETE.md
+
+# Ignore all markdown files except core documentation
 *.md
 !README.md
 !QUICKSTART.md
+!AGENTS.md

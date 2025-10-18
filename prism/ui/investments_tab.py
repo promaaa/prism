@@ -30,9 +30,11 @@ from PyQt6.QtCore import Qt, QDate, pyqtSignal, QThread, QStringListModel
 from PyQt6.QtGui import QColor, QFont
 
 from ..database.db_manager import DatabaseManager
+from ..database.trading_operations import TradingManager
 from ..api.crypto_api import CryptoAPI
 from ..api.stock_api import StockAPI
 from ..utils.ticker_data import get_ticker_suggestions, extract_ticker
+from .sell_asset_dialog import SellAssetDialog
 
 
 class PriceUpdateWorker(QThread):
@@ -49,7 +51,7 @@ class PriceUpdateWorker(QThread):
 
     def run(self):
         """Update prices in background thread."""
-        results = {"updated": 0, "failed": 0, "total": 0}
+        results = {"updated": 0, "failed": 0, "total": 0, "errors": []}
 
         try:
             # Get all assets
@@ -60,7 +62,7 @@ class PriceUpdateWorker(QThread):
                 self.finished.emit(results)
                 return
 
-            # Separate by type
+            # Update current prices
             crypto_tickers = [
                 a["ticker"] for a in assets if a["asset_type"] == "crypto"
             ]
@@ -68,42 +70,60 @@ class PriceUpdateWorker(QThread):
                 a["ticker"] for a in assets if a["asset_type"] in ["stock", "bond"]
             ]
 
-            # Update crypto prices
             if crypto_tickers:
-                self.progress.emit(30, "Fetching crypto prices...")
                 crypto_prices = self.crypto_api.get_multiple_prices_usd(crypto_tickers)
-                for asset in assets:
-                    if (
-                        asset["asset_type"] == "crypto"
-                        and asset["ticker"] in crypto_prices
-                    ):
-                        price = crypto_prices[asset["ticker"]]
-                        if price:
-                            self.db.update_asset_price(asset["id"], price)
-                            results["updated"] += 1
-                        else:
-                            results["failed"] += 1
-
-            # Update stock prices
             if stock_tickers:
-                self.progress.emit(70, "Fetching stock prices...")
                 stock_prices = self.stock_api.get_multiple_prices(stock_tickers)
-                for asset in assets:
-                    if (
-                        asset["asset_type"] in ["stock", "bond"]
-                        and asset["ticker"] in stock_prices
-                    ):
-                        price = stock_prices[asset["ticker"]]
-                        if price:
-                            self.db.update_asset_price(asset["id"], price)
-                            results["updated"] += 1
-                        else:
-                            results["failed"] += 1
+
+            for i, asset in enumerate(assets):
+                self.progress.emit(
+                    int((i / len(assets)) * 100), f"Updating {asset['ticker']}..."
+                )
+
+                # Update current price
+                price = None
+                if asset["asset_type"] == "crypto" and crypto_tickers:
+                    price = crypto_prices.get(asset["ticker"])
+                elif asset["asset_type"] in ["stock", "bond"] and stock_tickers:
+                    price = stock_prices.get(asset["ticker"])
+
+                if price:
+                    self.db.update_asset_price(asset["id"], price)
+                    results["updated"] += 1
+                else:
+                    results["failed"] += 1
+                    results["errors"].append(asset["ticker"])
+
+                # Fetch and store historical prices
+                last_date_str = self.db.get_last_historical_price_date(asset["id"])
+                days_to_fetch = 365  # Default to 1 year
+                if last_date_str:
+                    last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
+                    days_to_fetch = (datetime.now() - last_date).days
+
+                if days_to_fetch > 0:
+                    historical_prices = None
+                    if asset["asset_type"] == "crypto":
+                        historical_prices = self.crypto_api.get_historical_price(
+                            asset["ticker"], "usd", days_to_fetch
+                        )
+                    elif asset["asset_type"] == "stock":
+                        hist_data = self.stock_api.get_historical_data(
+                            asset["ticker"], f"{days_to_fetch}d", "1d"
+                        )
+                        if hist_data:
+                            historical_prices = list(
+                                zip(hist_data["dates"], hist_data["close"])
+                            )
+
+                    if historical_prices:
+                        self.db.add_historical_prices(asset["id"], historical_prices)
 
             self.progress.emit(100, "Complete")
 
         except Exception as e:
             print(f"Error updating prices: {e}")
+            results["errors"].append(f"An unexpected error occurred: {e}")
 
         self.finished.emit(results)
 
@@ -467,6 +487,7 @@ class InvestmentsTab(QWidget):
         self.db = db_manager
         self.crypto_api = crypto_api
         self.stock_api = stock_api
+        self.trading = TradingManager(db_manager)
         self.price_worker = None
         self._init_ui()
         self._load_data()
@@ -504,6 +525,30 @@ class InvestmentsTab(QWidget):
         self.refresh_btn = QPushButton("↻ Refresh")
         self.refresh_btn.clicked.connect(self._load_data)
         header_layout.addWidget(self.refresh_btn)
+
+        # Sell button
+        self.sell_btn = QPushButton("📉 Sell Asset")
+        self.sell_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f59e0b;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #d97706;
+            }
+            QPushButton:pressed {
+                background-color: #b45309;
+            }
+        """)
+        self.sell_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sell_btn.setToolTip("Sell an asset from your portfolio")
+        self.sell_btn.clicked.connect(self._on_sell_asset)
+        header_layout.addWidget(self.sell_btn)
 
         # Delete button
         self.delete_btn = QPushButton("🗑️ Delete Selected")
@@ -565,7 +610,7 @@ class InvestmentsTab(QWidget):
 
     def _create_card(self, title: str, value: str, color: str) -> QWidget:
         """
-        Create a summary card widget (Finary-inspired).
+        Create a summary card widget.
 
         Args:
             title: Card title
@@ -576,25 +621,30 @@ class InvestmentsTab(QWidget):
             QWidget configured as a card
         """
         card = QWidget()
-        card.setProperty("class", "card")
-        card.setMinimumHeight(120)
+        card.setStyleSheet(f"""
+            QWidget {{
+                background-color: palette(base);
+                border-radius: 8px;
+                border-left: 4px solid {color};
+            }}
+        """)
+        card.setMinimumHeight(100)
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(8)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(5)
 
         # Title
         title_label = QLabel(title)
-        title_label.setProperty("class", "card-title")
+        title_label.setStyleSheet("font-size: 12px; color: #666;")
         layout.addWidget(title_label)
 
         # Value
         value_label = QLabel(value)
         value_label.setObjectName("card_value")
-        value_label.setProperty("class", "card-value")
         value_label.setStyleSheet(
-            f"color: {color};"
-        )  # Override color for specific values
+            f"font-size: 24px; font-weight: bold; color: {color};"
+        )
         layout.addWidget(value_label)
 
         layout.addStretch()
@@ -637,6 +687,12 @@ class InvestmentsTab(QWidget):
         self.assets_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.assets_table.setAlternatingRowColors(True)
         self.assets_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.assets_table.setFocusPolicy(
+            Qt.FocusPolicy.StrongFocus
+        )  # Enable keyboard focus for delete key
+
+        # Install event filter for key events
+        self.assets_table.installEventFilter(self)
 
         # Connect selection handler
         self.assets_table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -681,14 +737,10 @@ class InvestmentsTab(QWidget):
         if value_label:
             value_label.setText(value)
             if color:
-                current_style = value_label.styleSheet()
-                # Replace color in stylesheet
-                import re
-
-                new_style = re.sub(
-                    r"color:\s*[^;]+;", f"color: {color};", current_style
+                # Update with full style to ensure font-size is preserved
+                value_label.setStyleSheet(
+                    f"font-size: 24px; font-weight: bold; color: {color};"
                 )
-                value_label.setStyleSheet(new_style)
 
     def _populate_table(self, assets: List[Dict[str, Any]]):
         """Populate assets table with data."""
@@ -697,7 +749,7 @@ class InvestmentsTab(QWidget):
         # Sort by value (highest first)
         assets_sorted = sorted(
             assets,
-            key=lambda x: x.get("quantity", 0) * x.get("current_price", 0),
+            key=lambda x: x.get("quantity", 0) * (x.get("current_price") or 0),
             reverse=True,
         )
 
@@ -708,6 +760,9 @@ class InvestmentsTab(QWidget):
             # Type
             type_item = QTableWidgetItem(asset.get("asset_type", "").upper())
             type_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            type_item.setData(
+                Qt.ItemDataRole.UserRole, asset["id"]
+            )  # Store asset ID for bulk delete
             self.assets_table.setItem(row, 0, type_item)
 
             # Ticker
@@ -724,7 +779,7 @@ class InvestmentsTab(QWidget):
             self.assets_table.setItem(row, 2, quantity_item)
 
             # Buy Price - show $ for crypto, € for stocks
-            buy_price = asset.get("price_buy", 0)
+            buy_price = asset.get("price_buy") or 0
             asset_type = asset.get("asset_type", "")
             currency_symbol = "$" if asset_type == "crypto" else "€"
             buy_price_item = QTableWidgetItem(f"{currency_symbol}{buy_price:,.2f}")
@@ -734,7 +789,7 @@ class InvestmentsTab(QWidget):
             self.assets_table.setItem(row, 3, buy_price_item)
 
             # Current Price - show $ for crypto, € for stocks
-            current_price = asset.get("current_price", 0)
+            current_price = asset.get("current_price") or 0
             current_price_item = QTableWidgetItem(
                 f"{currency_symbol}{current_price:,.2f}"
             )
@@ -981,6 +1036,15 @@ class InvestmentsTab(QWidget):
                     f"{deleted_count} asset(s) deleted, {failed_count} failed.",
                 )
 
+    def eventFilter(self, obj, event):
+        """Event filter to handle key events from table."""
+        if obj == self.assets_table and event.type() == event.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                if self.assets_table.selectedItems():
+                    self._on_delete_selected()
+                    return True  # Event handled
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event):
         """Handle key press events for Delete/Suppr key."""
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
@@ -1030,10 +1094,82 @@ class InvestmentsTab(QWidget):
         self._load_data()
         self.data_changed.emit()
 
+    def _on_sell_asset(self):
+        """Handle sell asset button click."""
+        dialog = SellAssetDialog(self.db, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            sale_data = dialog.get_sale_data()
+
+            if sale_data:
+                # Confirm the sale
+                confirm = QMessageBox.question(
+                    self,
+                    "Confirm Sale",
+                    f"Are you sure you want to sell?\n\n"
+                    f"Ticker: {sale_data['ticker']}\n"
+                    f"Quantity: {sale_data['quantity']:.8g}\n"
+                    f"Price: {sale_data['price']:.2f}€\n"
+                    f"Date: {sale_data['date']}",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+
+                if confirm == QMessageBox.StandardButton.Yes:
+                    try:
+                        # Execute the sale
+                        result = self.trading.sell_asset(
+                            ticker=sale_data["ticker"],
+                            quantity=sale_data["quantity"],
+                            price=sale_data["price"],
+                            date=sale_data["date"],
+                            notes=sale_data["notes"],
+                        )
+
+                        if result["success"]:
+                            # Determine if it's a gain or loss
+                            gain_loss = result["gain_loss"]
+                            is_gain = gain_loss >= 0
+                            emoji = "✅" if is_gain else "⚠️"
+                            word = "Gain" if is_gain else "Loss"
+
+                            # Show success message with details
+                            QMessageBox.information(
+                                self,
+                                "Sale Successful",
+                                f"{emoji} Sale completed successfully!\n\n"
+                                f"Ticker: {sale_data['ticker']}\n"
+                                f"Quantity sold: {sale_data['quantity']:.8g}\n"
+                                f"Sale price: {sale_data['price']:.2f}€\n\n"
+                                f"Sale proceeds: {result['sale_proceeds']:.2f}€\n"
+                                f"Cost basis: {result['cost_basis']:.2f}€\n\n"
+                                f"{word}: {result['gain_loss']:+.2f}€\n"
+                                f"Performance: {result['gain_loss_percent']:+.2f}%\n\n"
+                                f"Remaining quantity: {result['remaining_quantity']:.8g}",
+                            )
+
+                            # Refresh the data
+                            self._load_data()
+                            self.data_changed.emit()
+                        else:
+                            # Show error
+                            QMessageBox.critical(
+                                self,
+                                "Sale Failed",
+                                f"Failed to complete the sale:\n\n{result.get('error', 'Unknown error')}",
+                            )
+                    except Exception as e:
+                        QMessageBox.critical(
+                            self,
+                            "Error",
+                            f"An error occurred while processing the sale:\n\n{str(e)}",
+                        )
+
         # Show results
         total = results.get("total", 0)
         updated = results.get("updated", 0)
         failed = results.get("failed", 0)
+        errors = results.get("errors", [])
 
         if total == 0:
             QMessageBox.information(
@@ -1044,7 +1180,9 @@ class InvestmentsTab(QWidget):
             message += f"Total assets: {total}\n"
             message += f"Successfully updated: {updated}\n"
             if failed > 0:
-                message += f"Failed to update: {failed}"
+                message += f"Failed to update: {failed}\n"
+                if errors:
+                    message += f"Failed tickers: {', '.join(errors)}"
 
             QMessageBox.information(self, "Prices Updated", message)
 

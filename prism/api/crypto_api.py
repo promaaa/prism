@@ -6,7 +6,7 @@ Fetches real-time cryptocurrency prices from CoinGecko API.
 import asyncio
 import aiohttp
 import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from ..utils.logger import get_logger, log_exception, log_performance
 
@@ -525,6 +525,50 @@ class CryptoAPI:
         return await self.get_multiple_prices_async(
             tickers, currency="usd", use_cache=use_cache
         )
+
+    @log_exception
+    def get_historical_price(
+        self, ticker: str, currency: str, days: int
+    ) -> Optional[List[Tuple[str, float]]]:
+        """
+        Get historical price for a cryptocurrency.
+
+        Args:
+            ticker: Cryptocurrency ticker
+            currency: Target currency
+            days: Number of days to fetch
+
+        Returns:
+            Optional[List[Tuple[str, float]]]: List of (date, price) tuples or None
+        """
+        logger.debug(f"Fetching historical price for {ticker} for the last {days} days")
+
+        coin_id = self._get_coingecko_id(ticker)
+        url = f"{self.BASE_URL}/coins/{coin_id}/market_chart"
+        params = {"vs_currency": currency, "days": days, "interval": "daily"}
+
+        try:
+            response = requests.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            if "prices" in data:
+                prices = []
+                for item in data["prices"]:
+                    timestamp = item[0] / 1000  # Convert to seconds
+                    price = item[1]
+                    date = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+                    prices.append((date, price))
+                return prices
+
+            logger.warning(f"Historical prices not found in response for {ticker}")
+            return None
+
+        except requests.RequestException as e:
+            logger.error(
+                f"Error fetching historical price for {ticker}: {e}", exc_info=False
+            )
+            return None
 
 
 # Example usage

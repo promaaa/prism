@@ -616,8 +616,12 @@ class SettingsTab(QWidget):
 
     def _on_theme_changed(self, theme: str):
         """Handle theme change."""
-        theme_map = {"Sombre": "dark", "Clair": "light", "Auto (Système)": "auto"}
-        theme_key = theme_map.get(theme, "dark")
+        theme_map = {
+            "Sombre": "finary_dark",
+            "Clair": "finary_light",
+            "Auto (Système)": "auto",
+        }
+        theme_key = theme_map.get(theme, "finary_dark")
         self.theme_changed.emit(theme_key)
 
     def _create_backup(self):
