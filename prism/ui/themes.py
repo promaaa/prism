@@ -76,23 +76,97 @@ class ThemeManager:
 
     def _get_light_theme(self) -> str:
         """
-        Get the light theme stylesheet.
+        Get the light theme stylesheet (Finary-inspired).
 
         Returns:
             str: Light theme CSS
         """
         return """
-        /* Light Theme for Prism */
+        /* Light Theme for Prism - Finary Inspired */
 
         QMainWindow {
-            background-color: #f5f5f7;
+            background-color: #F5F5F5;
         }
 
         QWidget {
-            background-color: #f5f5f7;
+            background-color: #F5F5F5;
             color: #1d1d1f;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
             font-size: 13px;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background-color: #FFFFFF;
+            border-right: 1px solid #E0E0E0;
+            min-width: 200px;
+            max-width: 200px;
+        }
+
+        .sidebar-collapsed {
+            max-width: 60px;
+        }
+
+        .sidebar-button {
+            background-color: transparent;
+            color: #2E7D78;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .sidebar-button:hover {
+            background-color: #F0F8F7;
+        }
+
+        .sidebar-button:selected {
+            background-color: #2E7D78;
+            color: #FFFFFF;
+        }
+
+        /* Main Content */
+        .main-content {
+            background-color: #F5F5F5;
+        }
+
+        /* Header */
+        .header {
+            background-color: #FFFFFF;
+            border-bottom: 1px solid #E0E0E0;
+            padding: 16px 24px;
+        }
+
+        .header-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2E7D78;
+        }
+
+        /* Cards */
+        .card {
+            background-color: #FFFFFF;
+            border-radius: 12px;
+            border: 1px solid #E0E0E0;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .card:hover {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2E7D78;
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #FF6F61;
         }
 
         /* Tab Widget */
@@ -471,23 +545,97 @@ class ThemeManager:
 
     def _get_dark_theme(self) -> str:
         """
-        Get the dark theme stylesheet.
+        Get the dark theme stylesheet (Finary-inspired).
 
         Returns:
             str: Dark theme CSS
         """
         return """
-        /* Dark Theme for Prism */
+        /* Dark Theme for Prism - Finary Inspired */
 
         QMainWindow {
-            background-color: #1c1c1e;
+            background-color: #1A1A1A;
         }
 
         QWidget {
-            background-color: #1c1c1e;
-            color: #f5f5f7;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #1A1A1A;
+            color: #F5F5F5;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
             font-size: 13px;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background-color: #2A2A2A;
+            border-right: 1px solid #404040;
+            min-width: 200px;
+            max-width: 200px;
+        }
+
+        .sidebar-collapsed {
+            max-width: 60px;
+        }
+
+        .sidebar-button {
+            background-color: transparent;
+            color: #2E7D78;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .sidebar-button:hover {
+            background-color: #3A3A3A;
+        }
+
+        .sidebar-button:selected {
+            background-color: #2E7D78;
+            color: #FFFFFF;
+        }
+
+        /* Main Content */
+        .main-content {
+            background-color: #1A1A1A;
+        }
+
+        /* Header */
+        .header {
+            background-color: #2A2A2A;
+            border-bottom: 1px solid #404040;
+            padding: 16px 24px;
+        }
+
+        .header-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2E7D78;
+        }
+
+        /* Cards */
+        .card {
+            background-color: #2A2A2A;
+            border-radius: 12px;
+            border: 1px solid #404040;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .card:hover {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2E7D78;
+        }
+
+        .card-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #FF6F61;
         }
 
         /* Tab Widget */
@@ -866,7 +1014,7 @@ class ThemeManager:
 
     def get_color(self, color_name: str, theme: Theme = None) -> str:
         """
-        Get a color value for the current theme.
+        Get a color value for the current theme (Finary-inspired).
 
         Args:
             color_name: Name of the color
@@ -880,26 +1028,28 @@ class ThemeManager:
 
         colors = {
             Theme.LIGHT: {
-                "background": "#f5f5f7",
-                "surface": "#ffffff",
-                "primary": "#0071e3",
+                "background": "#F5F5F5",
+                "surface": "#FFFFFF",
+                "primary": "#2E7D78",
+                "accent": "#FF6F61",
                 "text": "#1d1d1f",
                 "text_secondary": "#86868b",
-                "border": "#d2d2d7",
-                "success": "#34c759",
-                "warning": "#ff9500",
-                "danger": "#ff3b30",
+                "border": "#E0E0E0",
+                "success": "#4CAF50",
+                "warning": "#FF9800",
+                "danger": "#FF6F61",
             },
             Theme.DARK: {
-                "background": "#1c1c1e",
-                "surface": "#2c2c2e",
-                "primary": "#0a84ff",
-                "text": "#f5f5f7",
-                "text_secondary": "#98989d",
-                "border": "#38383a",
-                "success": "#32d74b",
-                "warning": "#ff9f0a",
-                "danger": "#ff453a",
+                "background": "#1A1A1A",
+                "surface": "#2A2A2A",
+                "primary": "#2E7D78",
+                "accent": "#FF6F61",
+                "text": "#F5F5F5",
+                "text_secondary": "#B0B0B0",
+                "border": "#404040",
+                "success": "#4CAF50",
+                "warning": "#FF9800",
+                "danger": "#FF6F61",
             },
         }
 

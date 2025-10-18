@@ -538,7 +538,7 @@ class InvestmentsTab(QWidget):
 
     def _create_card(self, title: str, value: str, color: str) -> QWidget:
         """
-        Create a summary card widget.
+        Create a summary card widget (Finary-inspired).
 
         Args:
             title: Card title
@@ -549,32 +549,25 @@ class InvestmentsTab(QWidget):
             QWidget configured as a card
         """
         card = QWidget()
-        card.setStyleSheet(
-            f"""
-            QWidget {{
-                background-color: palette(base);
-                border-radius: 8px;
-                border-left: 4px solid {color};
-            }}
-        """
-        )
-        card.setMinimumHeight(100)
+        card.setProperty("class", "card")
+        card.setMinimumHeight(120)
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(5)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(8)
 
         # Title
         title_label = QLabel(title)
-        title_label.setStyleSheet("font-size: 12px; color: #666;")
+        title_label.setProperty("class", "card-title")
         layout.addWidget(title_label)
 
         # Value
         value_label = QLabel(value)
         value_label.setObjectName("card_value")
+        value_label.setProperty("class", "card-value")
         value_label.setStyleSheet(
-            f"font-size: 24px; font-weight: bold; color: {color};"
-        )
+            f"color: {color};"
+        )  # Override color for specific values
         layout.addWidget(value_label)
 
         layout.addStretch()

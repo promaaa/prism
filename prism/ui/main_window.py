@@ -1,6 +1,6 @@
 """
 Main window for Prism application.
-Provides the primary UI with tabbed interface for Personal Finances, Investments, and Reports.
+Provides the primary UI with Finary-inspired sidebar navigation for Personal Finances, Investments, Reports, and Orders.
 """
 
 import sys
@@ -10,16 +10,17 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QTabWidget,
+    QStackedWidget,
     QPushButton,
     QLabel,
     QMessageBox,
     QStatusBar,
     QMenuBar,
     QMenu,
-    QToolBar,
+    QLineEdit,
+    QFrame,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QAction, QKeySequence, QIcon
 
 from ..database.db_manager import DatabaseManager
@@ -41,7 +42,7 @@ logger = get_logger("ui.main_window")
 
 class MainWindow(QMainWindow):
     """
-    Main application window with tabbed interface.
+    Main application window with Finary-inspired sidebar navigation.
     """
 
     def __init__(self):
@@ -60,6 +61,9 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to initialize components: {e}")
             raise
 
+        # Sidebar state
+        self.sidebar_collapsed = False
+
         # Set up the window
         self.setWindowTitle("Prism - Personal Finance & Investment")
         self.setMinimumSize(1200, 800)
@@ -76,7 +80,6 @@ class MainWindow(QMainWindow):
 
         # Create UI
         self._create_menu_bar()
-        self._create_toolbar()
         self._create_central_widget()
         self._create_status_bar()
 
@@ -198,122 +201,170 @@ class MainWindow(QMainWindow):
 
         logger.debug("Menu bar created")
 
-    def _create_toolbar(self):
-        """Create the toolbar."""
-        toolbar = QToolBar("Main Toolbar")
-        toolbar.setMovable(False)
-        self.addToolBar(toolbar)
+    def _create_header(self):
+        """Create the top header with title, search, and refresh."""
+        header = QWidget()
+        header.setProperty("class", "header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(24, 16, 24, 16)
 
-        # Add Transaction button
-        add_transaction_btn = QPushButton("+ Transaction")
-        add_transaction_btn.setToolTip(Tooltips.MAIN_WINDOW["new_transaction"])
-        add_transaction_btn.clicked.connect(self._on_new_transaction)
-        toolbar.addWidget(add_transaction_btn)
+        # Title
+        title = QLabel("Prism")
+        title.setProperty("class", "header-title")
+        header_layout.addWidget(title)
 
-        # Add Asset button
-        add_asset_btn = QPushButton("+ Asset")
-        add_asset_btn.setToolTip(Tooltips.MAIN_WINDOW["new_asset"])
-        add_asset_btn.clicked.connect(self._on_new_asset)
-        toolbar.addWidget(add_asset_btn)
+        header_layout.addStretch()
 
-        toolbar.addSeparator()
+        # Search bar
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search transactions, assets...")
+        self.search_edit.setMaximumWidth(300)
+        header_layout.addWidget(self.search_edit)
 
-        # Refresh Prices button
-        refresh_btn = QPushButton("Refresh Prices")
-        refresh_btn.setToolTip(Tooltips.MAIN_WINDOW["refresh_prices"])
+        # Refresh button
+        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn.setToolTip("Refresh all data")
         refresh_btn.clicked.connect(self._on_refresh_prices)
-        toolbar.addWidget(refresh_btn)
+        header_layout.addWidget(refresh_btn)
 
-        toolbar.addSeparator()
-
-        # Theme toggle button
-        theme_btn = QPushButton("Toggle Theme")
-        theme_btn.setToolTip(Tooltips.MAIN_WINDOW["toggle_theme"])
-        theme_btn.clicked.connect(self._toggle_theme)
-        toolbar.addWidget(theme_btn)
-
-        toolbar.addSeparator()
-
-        # Log viewer button
-        log_btn = QPushButton("View Logs")
-        log_btn.setToolTip(Tooltips.MAIN_WINDOW["view_logs"])
-        log_btn.clicked.connect(self._show_log_viewer)
-        toolbar.addWidget(log_btn)
-
-        toolbar.addSeparator()
-
-        # Help button
-        help_btn = QPushButton("? Help")
-        help_btn.setToolTip("View help and tutorials (F1)")
-        help_btn.clicked.connect(lambda: HelpDialog.show_help("welcome", self))
-        toolbar.addWidget(help_btn)
-
-        logger.debug("Toolbar created")
+        return header
 
     def _create_central_widget(self):
-        """Create the central widget with tabs."""
+        """Create the central widget with sidebar and main content."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout = QHBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Create tab widget
-        self.tab_widget = QTabWidget()
-        layout.addWidget(self.tab_widget)
+        # Create sidebar
+        self.sidebar = self._create_sidebar()
+        layout.addWidget(self.sidebar)
 
-        # Create tabs
-        self._create_personal_tab()
-        self._create_investments_tab()
-        self._create_orders_tab()
-        self._create_reports_tab()
+        # Main content area
+        main_area = QWidget()
+        main_area.setProperty("class", "main-content")
+        main_layout = QVBoxLayout(main_area)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        logger.debug("Central widget created with all tabs")
+        # Header
+        header = self._create_header()
+        main_layout.addWidget(header)
 
-    def _create_personal_tab(self):
-        """Create the Personal Finances tab."""
+        # Stacked widget for content
+        self.content_stack = QStackedWidget()
+        main_layout.addWidget(self.content_stack)
+
+        # Create content pages
+        self._create_personal_page()
+        self._create_investments_page()
+        self._create_orders_page()
+        self._create_reports_page()
+
+        layout.addWidget(main_area)
+
+        logger.debug("Central widget created with sidebar and content")
+
+    def _create_sidebar(self):
+        """Create the collapsible sidebar with navigation."""
+        sidebar = QWidget()
+        sidebar.setProperty("class", "sidebar")
+        sidebar.setFixedWidth(200)
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(0, 24, 0, 24)
+        layout.setSpacing(8)
+
+        # Sidebar buttons
+        self.sidebar_buttons = []
+
+        # Personal Finances
+        personal_btn = QPushButton("💰 Personal Finances")
+        personal_btn.setProperty("class", "sidebar-button")
+        personal_btn.clicked.connect(lambda: self._switch_to_page(0))
+        layout.addWidget(personal_btn)
+        self.sidebar_buttons.append(personal_btn)
+
+        # Investments
+        investments_btn = QPushButton("📈 Investments")
+        investments_btn.setProperty("class", "sidebar-button")
+        investments_btn.clicked.connect(lambda: self._switch_to_page(1))
+        layout.addWidget(investments_btn)
+        self.sidebar_buttons.append(investments_btn)
+
+        # Orders
+        orders_btn = QPushButton("📋 Order Book")
+        orders_btn.setProperty("class", "sidebar-button")
+        orders_btn.clicked.connect(lambda: self._switch_to_page(2))
+        layout.addWidget(orders_btn)
+        self.sidebar_buttons.append(orders_btn)
+
+        # Reports
+        reports_btn = QPushButton("📊 Reports")
+        reports_btn.setProperty("class", "sidebar-button")
+        reports_btn.clicked.connect(lambda: self._switch_to_page(3))
+        layout.addWidget(reports_btn)
+        self.sidebar_buttons.append(reports_btn)
+
+        layout.addStretch()
+
+        # Toggle sidebar button
+        toggle_btn = QPushButton("◀")
+        toggle_btn.setMaximumWidth(40)
+        toggle_btn.clicked.connect(self._toggle_sidebar)
+        layout.addWidget(toggle_btn)
+
+        # Select first button
+        self._switch_to_page(0)
+
+        return sidebar
+
+    def _create_personal_page(self):
+        """Create the Personal Finances page."""
         try:
             self.personal_tab = PersonalTab(self.db)
             self.personal_tab.data_changed.connect(self._on_data_changed)
-            self.tab_widget.addTab(self.personal_tab, "Personal Finances")
-            logger.debug("Personal tab created")
+            self.content_stack.addWidget(self.personal_tab)
+            logger.debug("Personal page created")
         except Exception as e:
-            logger.error(f"Failed to create personal tab: {e}")
+            logger.error(f"Failed to create personal page: {e}")
             raise
 
-    def _create_investments_tab(self):
-        """Create the Investments tab."""
+    def _create_investments_page(self):
+        """Create the Investments page."""
         try:
             self.investments_tab = InvestmentsTab(
                 self.db, self.crypto_api, self.stock_api
             )
             self.investments_tab.data_changed.connect(self._on_data_changed)
-            self.tab_widget.addTab(self.investments_tab, "Investments")
-            logger.debug("Investments tab created")
+            self.content_stack.addWidget(self.investments_tab)
+            logger.debug("Investments page created")
         except Exception as e:
-            logger.error(f"Failed to create investments tab: {e}")
+            logger.error(f"Failed to create investments page: {e}")
             raise
 
-    def _create_orders_tab(self):
-        """Create the Orders tab."""
+    def _create_orders_page(self):
+        """Create the Orders page."""
         try:
             self.orders_tab = OrdersTab(self.db)
             self.orders_tab.data_changed.connect(self._on_data_changed)
-            self.tab_widget.addTab(self.orders_tab, "Order Book")
-            logger.debug("Orders tab created")
+            self.content_stack.addWidget(self.orders_tab)
+            logger.debug("Orders page created")
         except Exception as e:
-            logger.error(f"Failed to create orders tab: {e}")
+            logger.error(f"Failed to create orders page: {e}")
             raise
 
-    def _create_reports_tab(self):
-        """Create the Reports tab."""
+    def _create_reports_page(self):
+        """Create the Reports page."""
         try:
             self.reports_tab = ReportsTab(self.db)
             self.reports_tab.data_changed.connect(self._on_data_changed)
-            self.tab_widget.addTab(self.reports_tab, "Reports")
-            logger.debug("Reports tab created")
+            self.content_stack.addWidget(self.reports_tab)
+            logger.debug("Reports page created")
         except Exception as e:
-            logger.error(f"Failed to create reports tab: {e}")
+            logger.error(f"Failed to create reports page: {e}")
             raise
 
     def _create_status_bar(self):
@@ -359,6 +410,40 @@ class MainWindow(QMainWindow):
         # Trigger the investments tab's add asset dialog
         self.investments_tab._on_add_asset()
 
+    def _switch_to_page(self, index):
+        """Switch to the specified page."""
+        self.content_stack.setCurrentIndex(index)
+
+        # Update sidebar button styles
+        for i, btn in enumerate(self.sidebar_buttons):
+            if i == index:
+                btn.setProperty("class", "sidebar-button selected")
+            else:
+                btn.setProperty("class", "sidebar-button")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _toggle_sidebar(self):
+        """Toggle sidebar collapse/expand."""
+        if self.sidebar_collapsed:
+            # Expand
+            self.sidebar_animation = QPropertyAnimation(self.sidebar, b"maximumWidth")
+            self.sidebar_animation.setDuration(300)
+            self.sidebar_animation.setStartValue(60)
+            self.sidebar_animation.setEndValue(200)
+            self.sidebar_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            self.sidebar_animation.start()
+            self.sidebar_collapsed = False
+        else:
+            # Collapse
+            self.sidebar_animation = QPropertyAnimation(self.sidebar, b"maximumWidth")
+            self.sidebar_animation.setDuration(300)
+            self.sidebar_animation.setStartValue(200)
+            self.sidebar_animation.setEndValue(60)
+            self.sidebar_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+            self.sidebar_animation.start()
+            self.sidebar_collapsed = True
+
     @log_exception
     def _on_refresh_prices(self, checked=False):
         """Handle refresh prices action."""
@@ -370,8 +455,8 @@ class MainWindow(QMainWindow):
     def _on_export_data(self, checked=False):
         """Handle export data action."""
         logger.debug("Export data action triggered")
-        # Switch to reports tab which has export functionality
-        self.tab_widget.setCurrentWidget(self.reports_tab)
+        # Switch to reports page which has export functionality
+        self._switch_to_page(3)
 
     def _show_log_viewer(self, checked=False):
         """Show the log viewer dialog."""
@@ -408,17 +493,17 @@ class MainWindow(QMainWindow):
 
     def _refresh_ui(self):
         """Refresh the UI with updated data."""
-        logger.debug("Refreshing all UI tabs")
-        # Refresh personal tab
+        logger.debug("Refreshing all UI pages")
+        # Refresh personal page
         if hasattr(self, "personal_tab"):
             self.personal_tab.refresh()
-        # Refresh investments tab
+        # Refresh investments page
         if hasattr(self, "investments_tab"):
             self.investments_tab.refresh()
-        # Refresh orders tab
+        # Refresh orders page
         if hasattr(self, "orders_tab"):
             self.orders_tab.refresh()
-        # Refresh reports tab
+        # Refresh reports page
         if hasattr(self, "reports_tab"):
             self.reports_tab.refresh()
 
