@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QCompleter,
 )
 from PyQt6.QtCore import Qt, QDate, pyqtSignal, QThread, QStringListModel
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QKeyEvent
 
 from ..database.db_manager import DatabaseManager
 from ..database.trading_operations import TradingManager
@@ -35,6 +35,28 @@ from ..api.crypto_api import CryptoAPI
 from ..api.stock_api import StockAPI
 from ..utils.ticker_data import get_ticker_suggestions, extract_ticker
 from .sell_asset_dialog import SellAssetDialog
+
+
+class AssetsTable(QTableWidget):
+    """Custom QTableWidget with key press event handling."""
+
+    delete_selected = pyqtSignal()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        """Handle key press events for Delete/Suppr key."""
+        if (
+            event
+            and event.type() == QKeyEvent.Type.KeyPress
+            and event.key()
+            in (
+                Qt.Key.Key_Delete,
+                Qt.Key.Key_Backspace,
+            )
+        ):
+            if self.selectedItems():
+                self.delete_selected.emit()
+        else:
+            super().keyPressEvent(event)
 
 
 class PriceUpdateWorker(QThread):
@@ -653,7 +675,7 @@ class InvestmentsTab(QWidget):
 
     def _create_assets_table(self):
         """Create assets table widget."""
-        self.assets_table = QTableWidget()
+        self.assets_table = AssetsTable()
         self.assets_table.setColumnCount(9)
         self.assets_table.setHorizontalHeaderLabels(
             [
@@ -691,11 +713,9 @@ class InvestmentsTab(QWidget):
             Qt.FocusPolicy.StrongFocus
         )  # Enable keyboard focus for delete key
 
-        # Install event filter for key events
-        self.assets_table.installEventFilter(self)
-
         # Connect selection handler
         self.assets_table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.assets_table.delete_selected.connect(self._on_delete_selected)
 
     def _load_data(self):
         """Load data from database and update UI."""
@@ -968,6 +988,8 @@ class InvestmentsTab(QWidget):
         """Handle table selection changes."""
         has_selection = len(self.assets_table.selectedItems()) > 0
         self.delete_btn.setEnabled(has_selection)
+        if has_selection:
+            self.assets_table.setFocus()
 
     def _on_delete_selected(self):
         """Delete currently selected asset(s)."""
@@ -1035,23 +1057,6 @@ class InvestmentsTab(QWidget):
                     "Partial Success",
                     f"{deleted_count} asset(s) deleted, {failed_count} failed.",
                 )
-
-    def eventFilter(self, obj, event):
-        """Event filter to handle key events from table."""
-        if obj == self.assets_table and event.type() == event.Type.KeyPress:
-            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-                if self.assets_table.selectedItems():
-                    self._on_delete_selected()
-                    return True  # Event handled
-        return super().eventFilter(obj, event)
-
-    def keyPressEvent(self, event):
-        """Handle key press events for Delete/Suppr key."""
-        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            if self.assets_table.selectedItems():
-                self._on_delete_selected()
-        else:
-            super().keyPressEvent(event)
 
     def _on_refresh_prices(self):
         """Handle refresh prices button click."""
