@@ -123,4 +123,8 @@ ARCHITECTURE.md
 TICKER_QUICK_REFERENCE.md
 docs/LOGGING_GUIDE.md
 docs/TICKER_AUTOCOMPLETE.md
-assets/README.md
+
+# Ignore all markdown files except README.md and QUICKSTART.md
+*.md
+!README.md
+!QUICKSTART.md
