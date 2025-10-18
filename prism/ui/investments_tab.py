@@ -29,10 +29,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate, pyqtSignal, QThread, QStringListModel
 from PyQt6.QtGui import QColor, QFont
 
-from database.db_manager import DatabaseManager
-from api.crypto_api import CryptoAPI
-from api.stock_api import StockAPI
-from utils.ticker_data import get_ticker_suggestions, extract_ticker
+from ..database.db_manager import DatabaseManager
+from ..api.crypto_api import CryptoAPI
+from ..api.stock_api import StockAPI
+from ..utils.ticker_data import get_ticker_suggestions, extract_ticker
 
 
 class PriceUpdateWorker(QThread):

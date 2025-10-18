@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QIcon, QFont
 
-from ui.tooltips import get_help_text, Tooltips
+from .tooltips import get_help_text, Tooltips
 
 
 class HelpDialog(QDialog):

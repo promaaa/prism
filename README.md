@@ -43,14 +43,14 @@ Prism is a macOS desktop application for managing personal finances and investme
 
 4. **Set up application icon** (optional):
    ```bash
-   ./setup_icon.sh
+   ./scripts/setup_icon.sh
    ```
    Or manually place your `prism2.png` icon in the `assets/` folder.
    See `assets/README.md` for icon specifications.
 
 5. **Run the application**:
    ```bash
-   python main.py
+   python -m prism
    ```
 
 ### From Packaged .app (Coming Soon)
@@ -63,19 +63,12 @@ Prism is a macOS desktop application for managing personal finances and investme
 
 ```
 prism/
-├── main.py                 # Application entry point
-├── requirements.txt        # Python dependencies
-├── README.md              # This file
-├── src/                   # Source code
+├── prism/                 # Main application package
+│   ├── __main__.py        # Application entry point (run with: python -m prism)
 │   ├── database/          # SQLite database logic
 │   │   ├── __init__.py
 │   │   ├── db_manager.py  # Database operations
 │   │   └── schema.py      # Database schema
-│   ├── models/            # Data models
-│   │   ├── __init__.py
-│   │   ├── transaction.py # Transaction model
-│   │   ├── asset.py       # Asset model
-│   │   └── order.py       # Order model
 │   ├── api/               # API integrations
 │   │   ├── __init__.py
 │   │   ├── crypto_api.py  # CoinGecko API
@@ -85,18 +78,33 @@ prism/
 │   │   ├── main_window.py # Main application window
 │   │   ├── personal_tab.py   # Personal finances tab
 │   │   ├── investments_tab.py # Investments tab
+│   │   ├── orders_tab.py     # Order book tab
 │   │   ├── reports_tab.py    # Reports tab
-│   │   ├── forms.py       # Input forms
-│   │   └── themes.py      # Theme management
+│   │   ├── log_viewer_dialog.py # Log viewer
+│   │   ├── help_dialog.py     # Help system
+│   │   ├── themes.py      # Theme management
+│   │   └── tooltips.py    # UI tooltips
 │   └── utils/             # Helper functions
 │       ├── __init__.py
+│       ├── logger.py      # Logging system
+│       ├── ticker_data.py # Ticker suggestions
 │       ├── calculations.py # Portfolio calculations
 │       └── exports.py     # Export functionality
-└── tests/                 # Unit tests
-    ├── __init__.py
-    ├── test_database.py
-    ├── test_api.py
-    └── test_calculations.py
+├── scripts/               # Utility scripts
+│   ├── add_sample_data.py # Add sample data to database
+│   ├── run.sh            # Run script
+│   └── setup_icon.sh     # Icon setup script
+├── tests/                 # Unit tests
+│   ├── __init__.py
+│   └── test_database.py  # Database tests
+├── assets/                # Application assets
+│   ├── icon.png          # Application icon
+│   └── README.md         # Icon specifications
+├── .gitignore            # Git ignore rules
+├── LICENSE               # MIT License
+├── QUICKSTART.md         # Quick start guide
+├── README.md             # This file
+└── requirements.txt      # Python dependencies
 ```
 
 ## Usage
@@ -192,19 +200,19 @@ pytest tests/
 ### Code Formatting
 
 ```bash
-black src/ tests/
+black prism/ tests/
 ```
 
 ### Linting
 
 ```bash
-pylint src/
+pylint prism/
 ```
 
 ### Building .app Bundle
 
 ```bash
-pyinstaller --name=Prism --windowed --icon=assets/icon.icns main.py
+pyinstaller --name=Prism --windowed --icon=assets/icon.icns -m prism
 ```
 
 The `.app` bundle will be created in the `dist/` directory.

@@ -28,8 +28,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
-from database.db_manager import DatabaseManager
-from ui.tooltips import Tooltips, EXAMPLES
+from ..database.db_manager import DatabaseManager
+from .tooltips import Tooltips, EXAMPLES
 
 
 class TransactionDialog(QDialog):

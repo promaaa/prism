@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, date
 
 from .schema import get_database_path
-from utils.logger import get_logger, log_exception, log_performance, LogContext
+from ..utils.logger import get_logger, log_exception, log_performance, LogContext
 
 # Initialize logger for this module
 logger = get_logger("database")

@@ -7,17 +7,13 @@ Main entry point for the application.
 import sys
 from pathlib import Path
 
-# Add src directory to Python path
-src_path = Path(__file__).parent / "src"
-sys.path.insert(0, str(src_path))
-
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
-from database.schema import initialize_database
-from ui.main_window import MainWindow
-from utils.logger import get_logger, info, error, exception
+from .database.schema import initialize_database
+from .ui.main_window import MainWindow
+from .utils.logger import get_logger, info, error, exception
 
 # Initialize logger
 logger = get_logger("main")
@@ -50,9 +46,9 @@ def main():
         info("Application metadata set")
 
         # Set application icon for dock/taskbar (prefer prism2.png, fallback to icon.png)
-        icon_path = Path(__file__).parent / "assets" / "prism2.png"
+        icon_path = Path(__file__).parent.parent / "assets" / "prism2.png"
         if not icon_path.exists():
-            icon_path = Path(__file__).parent / "assets" / "icon.png"
+            icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
         if icon_path.exists():
             app.setWindowIcon(QIcon(str(icon_path)))
             info(f"Application icon set: {icon_path}")

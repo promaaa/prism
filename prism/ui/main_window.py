@@ -22,18 +22,18 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QIcon
 
-from database.db_manager import DatabaseManager
-from api.crypto_api import CryptoAPI
-from api.stock_api import StockAPI
-from utils.logger import get_logger, log_exception
-from ui.themes import ThemeManager, Theme
-from ui.tooltips import Tooltips
-from ui.personal_tab import PersonalTab
-from ui.investments_tab import InvestmentsTab
-from ui.reports_tab import ReportsTab
-from ui.orders_tab import OrdersTab
-from ui.log_viewer_dialog import LogViewerDialog
-from ui.help_dialog import HelpDialog
+from ..database.db_manager import DatabaseManager
+from ..api.crypto_api import CryptoAPI
+from ..api.stock_api import StockAPI
+from ..utils.logger import get_logger, log_exception
+from .themes import ThemeManager, Theme
+from .tooltips import Tooltips
+from .personal_tab import PersonalTab
+from .investments_tab import InvestmentsTab
+from .reports_tab import ReportsTab
+from .orders_tab import OrdersTab
+from .log_viewer_dialog import LogViewerDialog
+from .help_dialog import HelpDialog
 
 # Initialize logger for this module
 logger = get_logger("ui.main_window")

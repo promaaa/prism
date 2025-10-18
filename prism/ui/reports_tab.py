@@ -28,8 +28,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
 
-from database.db_manager import DatabaseManager
-from utils.exports import (
+from ..database.db_manager import DatabaseManager
+from ..utils.exports import (
     export_transactions_to_csv,
     export_assets_to_csv,
     export_orders_to_csv,

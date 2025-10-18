@@ -11,7 +11,7 @@ import tempfile
 import sys
 
 # Add src to path
-src_path = Path(__file__).parent.parent / "src"
+src_path = Path(__file__).parent.parent / "prism"
 sys.path.insert(0, str(src_path))
 
 from database.db_manager import DatabaseManager

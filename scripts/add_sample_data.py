@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import random
 
 # Add src directory to Python path
-src_path = Path(__file__).parent / "src"
+src_path = Path(__file__).parent / "prism"
 sys.path.insert(0, str(src_path))
 
 from database.db_manager import DatabaseManager

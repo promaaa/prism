@@ -34,7 +34,7 @@ class LogViewerDialog(QDialog):
         self.resize(1000, 700)
 
         # Import logger here to avoid circular imports
-        from utils.logger import get_log_files
+        from ..utils.logger import get_log_files
 
         self.log_files = get_log_files()
         self.current_log_file = self.log_files["main"]
@@ -140,7 +140,7 @@ class LogViewerDialog(QDialog):
         """Load and display the current log file."""
         try:
             # Import here to avoid circular imports
-            from utils.logger import get_log_files
+            from ..utils.logger import get_log_files
 
             if not self.current_log_file.exists():
                 self.log_text.setPlainText("Log file does not exist yet.")
@@ -290,7 +290,7 @@ class LogViewerDialog(QDialog):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                from utils.logger import clear_logs
+                from ..utils.logger import clear_logs
 
                 clear_logs()
                 self._load_log_file()

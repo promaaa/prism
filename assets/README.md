@@ -82,7 +82,7 @@ rm -rf prism.iconset
 
 Then use in PyInstaller:
 ```bash
-pyinstaller --name=Prism --windowed --icon=assets/prism.icns main.py
+pyinstaller --name=Prism --windowed --icon=assets/prism.icns -m prism
 ```
 
 ## Current Files

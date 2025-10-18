@@ -251,7 +251,7 @@ To open Python interactive shell with database access:
 
 ```bash
 python
->>> from src.database.db_manager import DatabaseManager
+>>> from prism.database.db_manager import DatabaseManager
 >>> db = DatabaseManager()
 >>> db.get_database_stats()
 ```

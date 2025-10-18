@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
-from database.db_manager import DatabaseManager
+from ..database.db_manager import DatabaseManager
 
 
 class OrderDialog(QDialog):

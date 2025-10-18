@@ -8,7 +8,7 @@ import aiohttp
 import requests
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
-from utils.logger import get_logger, log_exception, log_performance
+from ..utils.logger import get_logger, log_exception, log_performance
 
 # Initialize logger for this module
 logger = get_logger("api.crypto")
