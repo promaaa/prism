@@ -9,6 +9,10 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, date
 
 from .schema import get_database_path
+from utils.logger import get_logger, log_exception, log_performance, LogContext
+
+# Initialize logger for this module
+logger = get_logger("database")
 
 
 class DatabaseManager:
@@ -26,14 +30,17 @@ class DatabaseManager:
                     If None, uses default application support directory.
         """
         self.db_path = db_path if db_path else get_database_path()
+        logger.info(f"Initializing DatabaseManager with path: {self.db_path}")
         self._ensure_connection()
 
     def _ensure_connection(self) -> None:
         """Ensure database file exists and is accessible."""
         if not self.db_path.exists():
+            logger.info("Database file does not exist, initializing...")
             from .schema import initialize_database
 
             initialize_database(self.db_path)
+            logger.info("Database initialized successfully")
 
     def _get_connection(self) -> sqlite3.Connection:
         """
@@ -42,12 +49,18 @@ class DatabaseManager:
         Returns:
             sqlite3.Connection: Database connection
         """
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            conn.row_factory = sqlite3.Row
+            return conn
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {e}")
+            raise
 
     # ==================== TRANSACTIONS ====================
 
+    @log_exception
+    @log_performance("add_transaction")
     def add_transaction(
         self,
         date: str,
@@ -73,7 +86,12 @@ class DatabaseManager:
             ValueError: If transaction_type is not valid
         """
         if transaction_type not in ("personal", "investment"):
+            logger.error(f"Invalid transaction_type: {transaction_type}")
             raise ValueError("transaction_type must be 'personal' or 'investment'")
+
+        logger.debug(
+            f"Adding transaction: date={date}, amount={amount}, category={category}, type={transaction_type}"
+        )
 
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -88,8 +106,10 @@ class DatabaseManager:
 
         transaction_id = cursor.lastrowid
         conn.commit()
+        transaction_id = cursor.lastrowid
         conn.close()
 
+        logger.info(f"Transaction added successfully with ID: {transaction_id}")
         return transaction_id
 
     def get_transaction(self, transaction_id: int) -> Optional[Dict[str, Any]]:
@@ -159,6 +179,7 @@ class DatabaseManager:
         rows = cursor.fetchall()
         conn.close()
 
+        logger.debug(f"Retrieved {len(rows)} transactions")
         return [dict(row) for row in rows]
 
     def update_transaction(
@@ -275,6 +296,7 @@ class DatabaseManager:
         rows = cursor.fetchall()
         conn.close()
 
+        logger.debug(f"Retrieved {len(rows)} assets")
         return [dict(row) for row in rows]
 
     def get_balance(
@@ -393,8 +415,12 @@ class DatabaseManager:
 
         asset_id = cursor.lastrowid
         conn.commit()
+        order_id = cursor.lastrowid
         conn.close()
 
+        logger.info(f"Order added successfully with ID: {order_id}")
+        return order_id
+        logger.info(f"Asset added successfully with ID: {asset_id}")
         return asset_id
 
     def get_asset(self, asset_id: int) -> Optional[Dict[str, Any]]:
@@ -441,6 +467,7 @@ class DatabaseManager:
         rows = cursor.fetchall()
         conn.close()
 
+        logger.debug(f"Retrieved {len(rows)} orders")
         return [dict(row) for row in rows]
 
     def update_asset(
@@ -562,13 +589,17 @@ class DatabaseManager:
 
         return success
 
+    @log_exception
+    @log_performance("get_portfolio_value")
     def get_portfolio_value(self) -> float:
         """
-        Calculate total portfolio value based on current prices.
+        Calculate the total portfolio value based on current prices.
 
         Returns:
             float: Total portfolio value
         """
+        logger.debug("Calculating portfolio value")
+
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -644,13 +675,15 @@ class DatabaseManager:
 
     # ==================== ORDERS ====================
 
+    @log_exception
+    @log_performance("add_order")
     def add_order(
         self,
         ticker: str,
+        order_type: str,
         quantity: float,
         price: float,
-        order_type: str,
-        date: str,
+        order_date: str,
         status: str = "open",
     ) -> int:
         """
@@ -658,10 +691,10 @@ class DatabaseManager:
 
         Args:
             ticker: Asset ticker symbol
-            quantity: Order quantity
-            price: Order price
             order_type: Type of order ("buy" or "sell")
-            date: Order date in YYYY-MM-DD format
+            quantity: Quantity to buy/sell
+            price: Price per unit
+            order_date: Order date in YYYY-MM-DD format
             status: Order status ("open" or "closed")
 
         Returns:
@@ -671,10 +704,15 @@ class DatabaseManager:
             ValueError: If order_type or status is not valid
         """
         if order_type not in ("buy", "sell"):
+            logger.error(f"Invalid order_type: {order_type}")
             raise ValueError("order_type must be 'buy' or 'sell'")
-
         if status not in ("open", "closed"):
+            logger.error(f"Invalid status: {status}")
             raise ValueError("status must be 'open' or 'closed'")
+
+        logger.debug(
+            f"Adding order: ticker={ticker}, type={order_type}, quantity={quantity}, price={price}, status={status}"
+        )
 
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -690,6 +728,14 @@ class DatabaseManager:
         order_id = cursor.lastrowid
         conn.commit()
         conn.close()
+
+        logger.info(f"Order ID {order_id} deleted successfully")
+
+        logger.info(f"Order ID {order_id} updated successfully")
+
+        logger.info(f"Asset ID {asset_id} deleted successfully")
+
+        logger.info(f"Asset ID {asset_id} updated successfully")
 
         return order_id
 
@@ -864,13 +910,17 @@ class DatabaseManager:
 
     # ==================== UTILITY METHODS ====================
 
+    @log_exception
+    @log_performance("get_database_stats")
     def get_database_stats(self) -> Dict[str, int]:
         """
         Get statistics about the database.
 
         Returns:
-            Dict: Count of records in each table
+            Dict containing counts of transactions, assets, and orders
         """
+        logger.debug("Fetching database statistics")
+
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -887,6 +937,7 @@ class DatabaseManager:
 
         conn.close()
 
+        logger.debug(f"Database stats: {stats}")
         return stats
 
     def backup_database(self, backup_path: Path) -> bool:

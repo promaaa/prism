@@ -6,9 +6,10 @@ Prism is a macOS desktop application for managing personal finances and investme
 
 - **Personal Finance Tracking**: Track expenses and revenues with categorization
 - **Investment Management**: Manage PEA, cryptocurrencies, stocks, and bonds
+- **Order Book Management**: Track buy/sell orders with status management and filtering
 - **Real-Time Pricing**: Automatic price updates via CoinGecko and Yahoo Finance APIs
-- **Interactive Graphs**: Visual insights with Plotly charts
-- **Order Book**: Track buy/sell orders with CSV export
+- **Interactive Charts**: Beautiful Plotly visualizations for financial insights
+- **Data Export**: CSV export for transactions, assets, and orders
 - **Dark/Light Themes**: Customizable interface themes
 - **Local Database**: All data stored locally in SQLite (no cloud)
 
@@ -40,7 +41,14 @@ Prism is a macOS desktop application for managing personal finances and investme
    pip install -r requirements.txt
    ```
 
-4. **Run the application**:
+4. **Set up application icon** (optional):
+   ```bash
+   ./setup_icon.sh
+   ```
+   Or manually place your `prism2.png` icon in the `assets/` folder.
+   See `assets/README.md` for icon specifications.
+
+5. **Run the application**:
    ```bash
    python main.py
    ```
@@ -95,23 +103,34 @@ prism/
 
 ### Personal Finances Tab
 
-1. **Add Transaction**: Click the "+" button to add an expense or revenue
-2. **View Balance**: See your balance evolution over time in the line chart
-3. **Category Breakdown**: View expense/revenue distribution in the pie chart
-4. **Search**: Use the search bar to filter transactions by date, category, or description
+1. **Add Transaction**: Click "+ Add Transaction" to add an expense or revenue
+2. **View Balance**: See your current balance and total income/expenses in summary cards
+3. **Manage Transactions**: Edit or delete transactions directly from the table
+4. **Category Tracking**: Automatic categorization with auto-complete suggestions
 
 ### Investments Tab
 
-1. **Add Asset**: Click "+" to add a new investment (crypto, stock, or bond)
-2. **Refresh Prices**: Click "Refresh Prices" to update current market values
-3. **Portfolio Overview**: View total portfolio value and allocation
-4. **Order Book**: Manage buy/sell orders and track status
+1. **Add Asset**: Click "+ Add Asset" to add a new investment (crypto, stock, or bond)
+2. **Refresh Prices**: Click "🔄 Refresh Prices" to update current market values
+3. **Portfolio Overview**: View total portfolio value, gains/losses, and allocation
+4. **Manage Assets**: Edit quantities, view performance metrics, and delete assets
+
+### Order Book Tab
+
+1. **Add Order**: Click "+ Add Order" to track a buy or sell order
+2. **Filter Orders**: View all, open, or closed orders
+3. **Manage Status**: Toggle orders between open and closed status
+4. **Quick Actions**: Bulk close all open orders or delete all closed orders
 
 ### Reports Tab
 
-1. **View Graphs**: Interactive charts for financial analysis
-2. **Export Data**: Export order book to CSV format
-3. **Time Range**: Filter data by date range
+1. **View Charts**: Interactive Plotly charts for financial analysis
+   - Balance evolution over time
+   - Spending by category
+   - Portfolio value evolution
+   - Asset allocation breakdown
+2. **Export Data**: Export transactions, assets, or orders to CSV
+3. **Date Filters**: Filter charts by time range (last 7/30/90 days, year, custom)
 
 ## Database Schema
 

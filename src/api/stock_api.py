@@ -8,6 +8,10 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from utils.logger import get_logger, log_exception, log_performance
+
+# Initialize logger for this module
+logger = get_logger("api.stock")
 
 
 class StockAPI:
@@ -28,6 +32,7 @@ class StockAPI:
         self._cache_timestamp: Dict[str, datetime] = {}
         self._cache_duration = timedelta(minutes=5)  # Cache for 5 minutes
         self._executor = ThreadPoolExecutor(max_workers=5)
+        logger.info("StockAPI initialized with timeout=%s", timeout)
 
     def _is_cache_valid(self, ticker: str) -> bool:
         """
@@ -67,6 +72,8 @@ class StockAPI:
 
         return ticker
 
+    @log_exception
+    @log_performance("stock_get_price")
     def get_price(self, ticker: str, use_cache: bool = True) -> Optional[float]:
         """
         Get current price for a stock (synchronous).
@@ -78,10 +85,14 @@ class StockAPI:
         Returns:
             Optional[float]: Current price or None if fetch fails
         """
+        logger.debug(f"Fetching price for {ticker} (use_cache={use_cache})")
+
         # Check cache first
         if use_cache and self._is_cache_valid(ticker):
             cached_data = self._cache.get(ticker, {})
-            return cached_data.get("price")
+            price = cached_data.get("price")
+            logger.debug(f"Returning cached price for {ticker}: {price}")
+            return price
 
         normalized_ticker = self._normalize_ticker(ticker)
 
@@ -113,6 +124,7 @@ class StockAPI:
                 }
                 self._cache_timestamp[ticker] = datetime.now()
 
+                logger.info(f"Successfully fetched price for {ticker}: {price}")
                 return price
 
             # Fallback: try to get price from history
@@ -128,20 +140,28 @@ class StockAPI:
                 }
                 self._cache_timestamp[ticker] = datetime.now()
 
+                logger.info(
+                    f"Successfully fetched price (from history) for {ticker}: {price}"
+                )
                 return price
 
+            logger.warning(f"Price not found for {ticker}")
             return None
 
         except Exception as e:
-            print(f"Error fetching price for {ticker}: {e}")
+            logger.error(f"Error fetching price for {ticker}: {e}", exc_info=False)
 
             # Return cached price if available
             if ticker in self._cache:
                 cached_data = self._cache[ticker]
-                return cached_data.get("price")
+                price = cached_data.get("price")
+                logger.info(f"Returning cached price for {ticker} after error: {price}")
+                return price
 
             return None
 
+    @log_exception
+    @log_performance("stock_get_multiple_prices")
     def get_multiple_prices(
         self, tickers: List[str], use_cache: bool = True
     ) -> Dict[str, Optional[float]]:
@@ -155,6 +175,8 @@ class StockAPI:
         Returns:
             Dict[str, Optional[float]]: Dictionary mapping tickers to prices
         """
+        logger.debug(f"Fetching prices for {len(tickers)} tickers: {tickers}")
+
         results = {}
         uncached_tickers = []
 
@@ -259,10 +281,14 @@ class StockAPI:
         Returns:
             Optional[float]: Current price or None if fetch fails
         """
+        logger.debug(f"Async fetching price for {ticker}")
+
         # Check cache first
         if use_cache and self._is_cache_valid(ticker):
             cached_data = self._cache.get(ticker, {})
-            return cached_data.get("price")
+            price = cached_data.get("price")
+            logger.debug(f"Returning cached price for {ticker}: {price}")
+            return price
 
         # Run synchronous yfinance call in executor
         loop = asyncio.get_event_loop()
@@ -293,6 +319,7 @@ class StockAPI:
 
         return prices
 
+    @log_exception
     def get_stock_info(self, ticker: str) -> Optional[Dict[str, Any]]:
         """
         Get detailed information about a stock.
@@ -303,6 +330,8 @@ class StockAPI:
         Returns:
             Optional[Dict]: Stock information or None if fetch fails
         """
+        logger.debug(f"Fetching stock info for {ticker}")
+
         normalized_ticker = self._normalize_ticker(ticker)
 
         try:
@@ -324,7 +353,7 @@ class StockAPI:
             }
 
         except Exception as e:
-            print(f"Error fetching info for {ticker}: {e}")
+            logger.error(f"Error fetching stock info for {ticker}: {e}", exc_info=False)
             return None
 
     def get_historical_data(
@@ -366,8 +395,10 @@ class StockAPI:
 
     def clear_cache(self) -> None:
         """Clear the price cache."""
+        cache_size = len(self._cache)
         self._cache.clear()
         self._cache_timestamp.clear()
+        logger.info(f"Cache cleared ({cache_size} entries removed)")
 
     def get_cache_info(self) -> Dict[str, Any]:
         """
