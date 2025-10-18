@@ -265,6 +265,17 @@ class PersonalTab(QWidget):
         self.refresh_btn.clicked.connect(self._load_data)
         header_layout.addWidget(self.refresh_btn)
 
+        # Delete button
+        self.delete_btn = QPushButton("🗑️ Delete Selected")
+        self.delete_btn.setProperty("class", "danger")
+        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_btn.setToolTip(
+            "Delete selected transaction(s) (or press Delete/Suppr key)\nShift+Click or Ctrl+Click to select multiple"
+        )
+        self.delete_btn.clicked.connect(self._on_delete_selected)
+        self.delete_btn.setEnabled(False)  # Disabled until a row is selected
+        header_layout.addWidget(self.delete_btn)
+
         layout.addLayout(header_layout)
 
         # Summary cards
@@ -374,8 +385,14 @@ class PersonalTab(QWidget):
         self.transaction_table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
+        self.transaction_table.setSelectionMode(
+            QTableWidget.SelectionMode.ExtendedSelection
+        )
         self.transaction_table.setAlternatingRowColors(True)
         self.transaction_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        # Connect selection change to enable/disable delete button
+        self.transaction_table.itemSelectionChanged.connect(self._on_selection_changed)
 
     def _load_data(self):
         """Load data from database and update UI."""
@@ -426,6 +443,8 @@ class PersonalTab(QWidget):
 
             # Date
             date_item = QTableWidgetItem(trans.get("date", ""))
+            # Store transaction ID in the first column for later retrieval
+            date_item.setData(Qt.ItemDataRole.UserRole, trans.get("id"))
             self.transaction_table.setItem(row, 0, date_item)
 
             # Amount
@@ -461,19 +480,25 @@ class PersonalTab(QWidget):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(5, 2, 5, 2)
-        layout.setSpacing(5)
+        layout.setSpacing(8)
 
         # Edit button
-        edit_btn = QPushButton("✏️")
-        edit_btn.setMaximumWidth(35)
-        edit_btn.setToolTip("Edit transaction")
+        edit_btn = QPushButton("✏️ Edit")
+        edit_btn.setProperty("class", "secondary")
+        edit_btn.setMinimumWidth(70)
+        edit_btn.setMaximumWidth(85)
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.setToolTip("Edit this transaction")
         edit_btn.clicked.connect(lambda: self._on_edit_transaction(transaction))
         layout.addWidget(edit_btn)
 
         # Delete button
-        delete_btn = QPushButton("🗑️")
-        delete_btn.setMaximumWidth(35)
-        delete_btn.setToolTip("Delete transaction")
+        delete_btn = QPushButton("🗑️ Delete")
+        delete_btn.setProperty("class", "danger")
+        delete_btn.setMinimumWidth(80)
+        delete_btn.setMaximumWidth(95)
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.setToolTip("Delete this transaction")
         delete_btn.clicked.connect(lambda: self._on_delete_transaction(transaction))
         layout.addWidget(delete_btn)
 
@@ -554,3 +579,104 @@ class PersonalTab(QWidget):
     def refresh(self):
         """Public method to refresh the tab data."""
         self._load_data()
+
+    def _on_selection_changed(self):
+        """Handle table selection changes to enable/disable delete button."""
+        has_selection = len(self.transaction_table.selectedItems()) > 0
+        self.delete_btn.setEnabled(has_selection)
+
+    def _on_delete_selected(self):
+        """Delete the currently selected transaction(s)."""
+        selected_rows = self.transaction_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        # Get all transaction IDs from selected rows
+        transactions_to_delete = []
+        for index in selected_rows:
+            row = index.row()
+            item = self.transaction_table.item(row, 0)
+            if item:
+                trans_id = item.data(Qt.ItemDataRole.UserRole)
+                if trans_id:
+                    date = self.transaction_table.item(row, 0).text()
+                    amount = self.transaction_table.item(row, 1).text()
+                    category = self.transaction_table.item(row, 2).text()
+                    transactions_to_delete.append(
+                        {
+                            "id": trans_id,
+                            "date": date,
+                            "amount": amount,
+                            "category": category,
+                        }
+                    )
+
+        if not transactions_to_delete:
+            return
+
+        # Confirm deletion
+        count = len(transactions_to_delete)
+        if count == 1:
+            trans = transactions_to_delete[0]
+            message = (
+                f"Are you sure you want to delete this transaction?\n\n"
+                f"Date: {trans['date']}\n"
+                f"Amount: {trans['amount']}\n"
+                f"Category: {trans['category']}"
+            )
+        else:
+            message = (
+                f"Are you sure you want to delete {count} transactions?\n\n"
+                f"This action cannot be undone."
+            )
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            deleted_count = 0
+            failed_count = 0
+
+            for trans in transactions_to_delete:
+                try:
+                    self.db.delete_transaction(trans["id"])
+                    deleted_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    print(f"Failed to delete transaction {trans['id']}: {e}")
+
+            # Reload data
+            self._load_data()
+            self.data_changed.emit()
+
+            # Show result message
+            if failed_count == 0:
+                if count == 1:
+                    QMessageBox.information(
+                        self, "Success", "Transaction deleted successfully!"
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Success",
+                        f"{deleted_count} transactions deleted successfully!",
+                    )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Partial Success",
+                    f"{deleted_count} transaction(s) deleted, {failed_count} failed.",
+                )
+
+    def keyPressEvent(self, event):
+        """Handle key press events for Delete/Suppr key."""
+        # Check if Delete or Backspace key is pressed
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if self.transaction_table.selectedItems():
+                self._on_delete_selected()
+        else:
+            super().keyPressEvent(event)

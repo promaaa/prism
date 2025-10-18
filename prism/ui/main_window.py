@@ -20,8 +20,8 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QFrame,
 )
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QAction, QKeySequence, QIcon
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize
+from PyQt6.QtGui import QAction, QKeySequence, QIcon, QPixmap
 
 from ..database.db_manager import DatabaseManager
 from ..api.crypto_api import CryptoAPI
@@ -33,8 +33,12 @@ from .personal_tab import PersonalTab
 from .investments_tab import InvestmentsTab
 from .reports_tab import ReportsTab
 from .orders_tab import OrdersTab
+from .settings_tab import SettingsTab
 from .log_viewer_dialog import LogViewerDialog
 from .help_dialog import HelpDialog
+from .csv_import_dialog import CSVImportDialog
+from .recurring_dialog import RecurringDialog
+from .categories_dialog import CategoriesDialog
 
 # Initialize logger for this module
 logger = get_logger("ui.main_window")
@@ -112,6 +116,13 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self._on_export_data)
         file_menu.addAction(export_action)
 
+        # Import CSV action
+        import_action = QAction("&Import from CSV", self)
+        import_action.setShortcut(QKeySequence("Ctrl+I"))
+        import_action.setToolTip("Import transactions from CSV file")
+        import_action.triggered.connect(self._on_import_csv)
+        file_menu.addAction(import_action)
+
         file_menu.addSeparator()
 
         quit_action = QAction("&Quit", self)
@@ -119,6 +130,29 @@ class MainWindow(QMainWindow):
         quit_action.setToolTip(Tooltips.MAIN_WINDOW["quit"])
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
+
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        recurring_action = QAction("&Recurring Transactions", self)
+        recurring_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        recurring_action.setToolTip("Manage recurring transactions")
+        recurring_action.triggered.connect(self._on_recurring_transactions)
+        tools_menu.addAction(recurring_action)
+
+        categories_action = QAction("&Categories && Budgets", self)
+        categories_action.setShortcut(QKeySequence("Ctrl+Shift+C"))
+        categories_action.setToolTip("Manage categories and budget limits")
+        categories_action.triggered.connect(self._on_manage_categories)
+        tools_menu.addAction(categories_action)
+
+        tools_menu.addSeparator()
+
+        pdf_report_action = QAction("Generate &PDF Report", self)
+        pdf_report_action.setShortcut(QKeySequence("Ctrl+P"))
+        pdf_report_action.setToolTip("Generate PDF financial report")
+        pdf_report_action.triggered.connect(self._on_generate_pdf_report)
+        tools_menu.addAction(pdf_report_action)
 
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -238,11 +272,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Create sidebar
-        self.sidebar = self._create_sidebar()
-        layout.addWidget(self.sidebar)
-
-        # Main content area
+        # Main content area (create BEFORE sidebar)
         main_area = QWidget()
         main_area.setProperty("class", "main-content")
         main_layout = QVBoxLayout(main_area)
@@ -253,7 +283,7 @@ class MainWindow(QMainWindow):
         header = self._create_header()
         main_layout.addWidget(header)
 
-        # Stacked widget for content
+        # Stacked widget for content (MUST be created before sidebar)
         self.content_stack = QStackedWidget()
         main_layout.addWidget(self.content_stack)
 
@@ -262,61 +292,112 @@ class MainWindow(QMainWindow):
         self._create_investments_page()
         self._create_orders_page()
         self._create_reports_page()
+        self._create_settings_page()
+
+        # NOW create sidebar (after content_stack exists)
+        self.sidebar = self._create_sidebar()
+        layout.addWidget(self.sidebar)
 
         layout.addWidget(main_area)
 
         logger.debug("Central widget created with sidebar and content")
 
     def _create_sidebar(self):
-        """Create the collapsible sidebar with navigation."""
+        """Create the fixed dark sidebar with Finary-style navigation."""
         sidebar = QWidget()
         sidebar.setProperty("class", "sidebar")
-        sidebar.setFixedWidth(200)
+        sidebar.setFixedWidth(250)
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(0, 24, 0, 24)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 24)
+        layout.setSpacing(0)
 
-        # Sidebar buttons
+        # Sidebar header with logo (Finary style)
+        header_widget = QWidget()
+        header_widget.setProperty("class", "sidebar-header")
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(20, 24, 20, 24)
+        header_layout.setSpacing(12)
+
+        # Icon image (icon.png) - 50x50px, aligned left
+        icon_label = QLabel()
+        icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
+        if icon_path.exists():
+            pixmap = QPixmap(str(icon_path))
+            scaled_pixmap = pixmap.scaled(
+                50,
+                50,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            icon_label.setPixmap(scaled_pixmap)
+            icon_label.setFixedSize(50, 50)
+            icon_label.setProperty("class", "sidebar-icon")
+            header_layout.addWidget(icon_label)
+            logger.debug(f"Sidebar icon loaded: {icon_path}")
+        else:
+            logger.warning(f"Sidebar icon not found: {icon_path}")
+
+        # Text logo
+        logo = QLabel("prism")
+        logo.setProperty("class", "sidebar-logo")
+        header_layout.addWidget(logo)
+        header_layout.addStretch()
+
+        layout.addWidget(header_widget)
+
+        # Sidebar navigation section
+        nav_container = QWidget()
+        nav_layout = QVBoxLayout(nav_container)
+        nav_layout.setContentsMargins(0, 8, 0, 0)
+        nav_layout.setSpacing(2)
+
+        # Sidebar buttons (Finary icons: home, wallet, chart, file)
         self.sidebar_buttons = []
 
-        # Personal Finances
-        personal_btn = QPushButton("💰 Personal Finances")
-        personal_btn.setProperty("class", "sidebar-button")
-        personal_btn.clicked.connect(lambda: self._switch_to_page(0))
-        layout.addWidget(personal_btn)
-        self.sidebar_buttons.append(personal_btn)
+        # Synthèse / Dashboard
+        dashboard_btn = QPushButton("🏠  Synthèse")
+        dashboard_btn.setProperty("class", "sidebar-button")
+        dashboard_btn.setMinimumHeight(48)
+        dashboard_btn.clicked.connect(lambda: self._switch_to_page(0))
+        nav_layout.addWidget(dashboard_btn)
+        self.sidebar_buttons.append(dashboard_btn)
 
-        # Investments
-        investments_btn = QPushButton("📈 Investments")
+        # Patrimoine / Investments
+        investments_btn = QPushButton("💼  Patrimoine")
         investments_btn.setProperty("class", "sidebar-button")
+        investments_btn.setMinimumHeight(48)
         investments_btn.clicked.connect(lambda: self._switch_to_page(1))
-        layout.addWidget(investments_btn)
+        nav_layout.addWidget(investments_btn)
         self.sidebar_buttons.append(investments_btn)
 
-        # Orders
-        orders_btn = QPushButton("📋 Order Book")
+        # Investir / Orders
+        orders_btn = QPushButton("📈  Investir")
         orders_btn.setProperty("class", "sidebar-button")
+        orders_btn.setMinimumHeight(48)
         orders_btn.clicked.connect(lambda: self._switch_to_page(2))
-        layout.addWidget(orders_btn)
+        nav_layout.addWidget(orders_btn)
         self.sidebar_buttons.append(orders_btn)
 
-        # Reports
-        reports_btn = QPushButton("📊 Reports")
+        # Analyses / Reports
+        reports_btn = QPushButton("📊  Analyses")
         reports_btn.setProperty("class", "sidebar-button")
+        reports_btn.setMinimumHeight(48)
         reports_btn.clicked.connect(lambda: self._switch_to_page(3))
-        layout.addWidget(reports_btn)
+        nav_layout.addWidget(reports_btn)
         self.sidebar_buttons.append(reports_btn)
 
+        layout.addWidget(nav_container)
         layout.addStretch()
 
-        # Toggle sidebar button
-        toggle_btn = QPushButton("◀")
-        toggle_btn.setMaximumWidth(40)
-        toggle_btn.clicked.connect(self._toggle_sidebar)
-        layout.addWidget(toggle_btn)
+        # Settings/Profile at bottom (Finary style)
+        settings_btn = QPushButton("⚙️  Paramètres")
+        settings_btn.setProperty("class", "sidebar-button")
+        settings_btn.setMinimumHeight(48)
+        settings_btn.clicked.connect(lambda: self._switch_to_page(4))
+        layout.addWidget(settings_btn)
 
-        # Select first button
+        # Select first button after sidebar is created
         self._switch_to_page(0)
 
         return sidebar
@@ -365,6 +446,18 @@ class MainWindow(QMainWindow):
             logger.debug("Reports page created")
         except Exception as e:
             logger.error(f"Failed to create reports page: {e}")
+            raise
+
+    def _create_settings_page(self):
+        """Create the Settings page."""
+        try:
+            self.settings_tab = SettingsTab(self.db)
+            self.settings_tab.settings_changed.connect(self._on_settings_changed)
+            self.settings_tab.theme_changed.connect(self._toggle_theme)
+            self.content_stack.addWidget(self.settings_tab)
+            logger.debug("Settings page created")
+        except Exception as e:
+            logger.error(f"Failed to create settings page: {e}")
             raise
 
     def _create_status_bar(self):
@@ -458,6 +551,96 @@ class MainWindow(QMainWindow):
         # Switch to reports page which has export functionality
         self._switch_to_page(3)
 
+    @log_exception
+    def _on_import_csv(self, checked=False):
+        """Handle CSV import action."""
+        logger.info("CSV import action triggered")
+        try:
+            dialog = CSVImportDialog(self.db_manager, self)
+            dialog.exec()
+        except Exception as e:
+            logger.error(f"Failed to open CSV import dialog: {e}")
+            QMessageBox.critical(
+                self, "Error", f"Failed to open CSV import dialog:\n{str(e)}"
+            )
+
+    @log_exception
+    def _on_recurring_transactions(self, checked=False):
+        """Handle recurring transactions management."""
+        logger.info("Recurring transactions dialog triggered")
+        try:
+            dialog = RecurringDialog(self.db_manager, self)
+            dialog.data_changed.connect(self._refresh_ui)
+            dialog.exec()
+        except Exception as e:
+            logger.error(f"Failed to open recurring transactions dialog: {e}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open recurring transactions dialog:\n{str(e)}",
+            )
+
+    @log_exception
+    def _on_manage_categories(self, checked=False):
+        """Handle categories and budget management."""
+        logger.info("Categories management dialog triggered")
+        try:
+            dialog = CategoriesDialog(self.db_manager, self)
+            dialog.data_changed.connect(self._refresh_ui)
+            dialog.exec()
+        except Exception as e:
+            logger.error(f"Failed to open categories dialog: {e}")
+            QMessageBox.critical(
+                self, "Error", f"Failed to open categories dialog:\n{str(e)}"
+            )
+
+    @log_exception
+    def _on_generate_pdf_report(self, checked=False):
+        """Handle PDF report generation."""
+        logger.info("PDF report generation triggered")
+        from PyQt6.QtWidgets import QFileDialog
+        from datetime import datetime
+        from ..utils.pdf_reports import PDFReportGenerator
+
+        try:
+            # Ask user for save location
+            default_filename = (
+                f"prism_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            )
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save PDF Report",
+                str(Path.home() / "Downloads" / default_filename),
+                "PDF Files (*.pdf)",
+            )
+
+            if file_path:
+                # Generate report
+                generator = PDFReportGenerator(self.db_manager)
+                generator.generate_full_report(file_path)
+
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"PDF report generated successfully!\n\nSaved to:\n{file_path}",
+                )
+
+                logger.info(f"PDF report generated: {file_path}")
+
+        except ImportError:
+            QMessageBox.warning(
+                self,
+                "Missing Dependency",
+                "PDF generation requires ReportLab.\n\n"
+                "Please install it with:\npip install reportlab",
+            )
+            logger.error("ReportLab not installed")
+        except Exception as e:
+            logger.error(f"Failed to generate PDF report: {e}")
+            QMessageBox.critical(
+                self, "Error", f"Failed to generate PDF report:\n{str(e)}"
+            )
+
     def _show_log_viewer(self, checked=False):
         """Show the log viewer dialog."""
         logger.info("Opening log viewer")
@@ -513,6 +696,13 @@ class MainWindow(QMainWindow):
         # Refresh all tabs when data changes
         self._refresh_ui()
         self.status_bar.showMessage("Data updated", 2000)
+
+    def _on_settings_changed(self):
+        """Handle settings changed signal from settings tab."""
+        logger.debug("Settings changed")
+        self.status_bar.showMessage("Settings saved successfully", 3000)
+        # Optionally reload settings-dependent components
+        # For example: refresh UI with new font size, currency format, etc.
 
     def closeEvent(self, event):
         """Handle window close event."""

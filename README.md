@@ -4,6 +4,7 @@ Prism is a macOS desktop application for managing personal finances and investme
 
 ## Features
 
+### Core Features
 - **Personal Finance Tracking**: Track expenses and revenues with categorization
 - **Investment Management**: Manage PEA, cryptocurrencies, stocks, and bonds
 - **Order Book Management**: Track buy/sell orders with status management and filtering
@@ -12,6 +13,18 @@ Prism is a macOS desktop application for managing personal finances and investme
 - **Data Export**: CSV export for transactions, assets, and orders
 - **Dark/Light Themes**: Customizable interface themes
 - **Local Database**: All data stored locally in SQLite (no cloud)
+
+### New in v1.2.0 🎉
+- **USD/EUR Crypto Support**: Track cryptocurrency purchases in USD with portfolio totals in EUR
+- **Exchange Rate Conversion**: Real-time USD/EUR conversion with intelligent caching
+- **Dual Currency Display**: View crypto prices in native currency (USD or EUR) with automatic conversion
+
+### New in v1.1.0
+- **CSV Import**: Bulk import transactions from CSV files with validation and duplicate detection
+- **Recurring Transactions**: Automate recurring income and expenses (daily, weekly, monthly, yearly)
+- **Custom Categories**: Create unlimited custom categories with colors, icons, and budget limits
+- **Budget Management**: Set monthly budget limits and receive alerts when approaching limits
+- **PDF Reports**: Generate professional financial reports in PDF format
 
 ## Requirements
 
@@ -119,9 +132,15 @@ prism/
 ### Investments Tab
 
 1. **Add Asset**: Click "+ Add Asset" to add a new investment (crypto, stock, or bond)
+   - For crypto: Choose price currency (USD or EUR)
+   - Prices fetched in selected currency
 2. **Refresh Prices**: Click "🔄 Refresh Prices" to update current market values
+   - Also refreshes USD/EUR exchange rate
 3. **Portfolio Overview**: View total portfolio value, gains/losses, and allocation
-4. **Manage Assets**: Edit quantities, view performance metrics, and delete assets
+   - Total value always calculated in EUR
+   - USD crypto values automatically converted
+4. **Exchange Rate**: View current USD/EUR rate in header (with cache age)
+5. **Manage Assets**: Edit quantities, view performance metrics, and delete assets
 
 ### Order Book Tab
 
@@ -158,6 +177,7 @@ prism/
 - `date_buy`: Purchase date
 - `current_price`: Current market price (updated via API)
 - `asset_type`: "crypto", "stock", or "bond"
+- `price_currency`: Currency of purchase price ("USD" or "EUR", default: "EUR")
 
 ### Orders Table
 - `id`: Primary key
@@ -182,16 +202,37 @@ prism/
 
 ## Keyboard Shortcuts
 
+### Basic Actions
 - `Cmd+N`: New transaction/asset
 - `Cmd+R`: Refresh prices
 - `Cmd+E`: Export data
 - `Cmd+T`: Toggle theme
-- `Cmd+F`: Search
 - `Cmd+Q`: Quit application
+
+### New Features (v1.1.0)
+- `Cmd+I`: Import from CSV
+- `Cmd+P`: Generate PDF Report
+- `Cmd+Shift+R`: Recurring Transactions
+- `Cmd+Shift+C`: Categories & Budgets
+- `Cmd+L`: View Logs
 
 ## Development
 
-### Running Tests
+### Testing New Features
+
+Test the new features with the included test script:
+
+```bash
+python scripts/test_new_features.py
+```
+
+This will test:
+- CSV import functionality
+- Recurring transactions
+- Category management
+- PDF report generation
+
+### Running Unit Tests
 
 ```bash
 pytest tests/
@@ -236,15 +277,21 @@ The `.app` bundle will be created in the `dist/` directory.
 
 ## Roadmap
 
+### Completed Features ✓
+- [x] CSV import for bulk transaction entry
+- [x] PDF report generation
+- [x] Custom categories and budget alerts
+- [x] Recurring transactions
+
 ### Future Features (Next Iterations)
-- [ ] CSV import for bulk transaction entry
-- [ ] PDF report generation
 - [ ] Data encryption for security
-- [ ] Custom categories and budget alerts
-- [ ] Advanced charts (heatmap, waterfall)
+- [ ] Advanced charts (heatmap, waterfall, treemap)
 - [ ] Multi-currency support
-- [ ] Recurring transactions
 - [ ] Tax report generation
+- [ ] Bank integration (read-only)
+- [ ] Transaction search and advanced filtering
+- [ ] Cloud sync (optional)
+- [ ] Mobile app companion
 
 ## License
 
@@ -266,12 +313,71 @@ For issues, questions, or suggestions:
 - Open an issue on GitHub
 - Email: support@prism-app.com
 
+## What's New in v1.2.0
+
+### USD/EUR Cryptocurrency Support
+Track cryptocurrency purchases made in USD while maintaining portfolio totals in EUR.
+
+**Key Features:**
+- Choose USD or EUR when adding crypto assets
+- Crypto prices displayed in native currency
+- Portfolio totals automatically calculated in EUR
+- Real-time exchange rate conversion
+- Exchange rate displayed in Investments tab
+
+**How to use:**
+1. Add a crypto asset (e.g., BTC, ETH)
+2. Select "USD" from Price Currency dropdown
+3. Enter purchase price in USD
+4. View prices in USD, portfolio total in EUR
+
+See `docs/USD_EUR_CRYPTO_GUIDE.md` for detailed documentation.
+
+## What's New in v1.1.0
+
+### CSV Import
+Import transactions in bulk from CSV files. The system validates data, detects duplicates, and provides detailed error reporting.
+
+**How to use:**
+1. Go to `File → Import from CSV` or press `Cmd+I`
+2. Download a sample CSV to see the format
+3. Prepare your CSV with columns: date, amount, category, type, description
+4. Import and review the results
+
+### Recurring Transactions
+Set up automated recurring transactions for salaries, rent, subscriptions, and more.
+
+**How to use:**
+1. Go to `Tools → Recurring Transactions` or press `Cmd+Shift+R`
+2. Add a new recurring transaction with frequency (daily, weekly, monthly, yearly)
+3. The system automatically creates transactions on due dates
+4. View upcoming transactions and estimated monthly impact
+
+### Categories & Budgets
+Create custom categories with visual customization and set monthly budget limits.
+
+**How to use:**
+1. Go to `Tools → Categories & Budgets` or press `Cmd+Shift+C`
+2. Create custom categories with colors and emoji icons
+3. Set monthly budget limits for expense categories
+4. Receive alerts when spending approaches limits
+
+### PDF Reports
+Generate professional financial reports with comprehensive summaries.
+
+**How to use:**
+1. Go to `Tools → Generate PDF Report` or press `Cmd+P`
+2. Choose where to save the PDF
+3. Review your complete financial overview with charts and tables
+
+See [CHANGELOG.md](CHANGELOG.md) for complete details.
+
 ## Acknowledgments
 
 - Inspired by Finary's clean interface design
-- Built with PyQt6, Plotly, and Python
+- Built with PyQt6, Plotly, ReportLab, and Python
 - APIs provided by CoinGecko and Yahoo Finance
 
 ---
 
-**Note**: This is the initial MVP iteration. Security features (encryption, passwords) will be added in future versions.
+**Current Version**: 1.2.0 - Now with USD/EUR Crypto Support, CSV Import, Recurring Transactions, Categories & Budgets, and PDF Reports!

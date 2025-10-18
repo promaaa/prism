@@ -71,7 +71,7 @@ class PriceUpdateWorker(QThread):
             # Update crypto prices
             if crypto_tickers:
                 self.progress.emit(30, "Fetching crypto prices...")
-                crypto_prices = self.crypto_api.get_multiple_prices(crypto_tickers)
+                crypto_prices = self.crypto_api.get_multiple_prices_usd(crypto_tickers)
                 for asset in assets:
                     if (
                         asset["asset_type"] == "crypto"
@@ -190,12 +190,18 @@ class AssetDialog(QDialog):
             self.quantity_edit.setText(str(self.asset.get("quantity", "")))
         form_layout.addRow("Quantity:", self.quantity_edit)
 
-        # Buy Price field
+        # Buy Price field with dynamic label
+        self.buy_price_label = QLabel("Buy Price ($):")  # Default to USD for crypto
         self.buy_price_edit = QLineEdit()
         self.buy_price_edit.setPlaceholderText("Purchase price per unit")
         if self.is_edit and self.asset:
             self.buy_price_edit.setText(str(self.asset.get("price_buy", "")))
-        form_layout.addRow("Buy Price (€):", self.buy_price_edit)
+            # Update label based on asset's price_currency
+            currency_symbol = (
+                "$" if self.asset.get("price_currency", "USD") == "USD" else "€"
+            )
+            self.buy_price_label.setText(f"Buy Price ({currency_symbol}):")
+        form_layout.addRow(self.buy_price_label, self.buy_price_edit)
 
         # Date field
         self.date_edit = QDateEdit()
@@ -347,14 +353,17 @@ class AssetDialog(QDialog):
         # Fetch price based on type
         price = None
         if asset_type == "crypto":
-            price = self.crypto_api.get_price(ticker)
+            price = self.crypto_api.get_price_usd(ticker)
         else:
             price = self.stock_api.get_price(ticker)
 
         self.fetch_price_btn.setEnabled(True)
 
         if price:
-            self.price_result_label.setText(f"✅ Current price: €{price:,.2f}")
+            currency_symbol = "$" if asset_type == "crypto" else "€"
+            self.price_result_label.setText(
+                f"✅ Current price: {currency_symbol}{price:,.2f}"
+            )
             self.price_result_label.setStyleSheet("color: #4CAF50;")
         else:
             self.price_result_label.setText(
@@ -417,12 +426,18 @@ class AssetDialog(QDialog):
         date = self.date_edit.date()
         date_str = f"{date.year()}-{date.month():02d}-{date.day():02d}"
 
+        asset_type = self.asset_type_combo.currentText()
+
+        # Cryptos ALWAYS use USD, stocks/bonds use EUR
+        price_currency = "USD" if asset_type == "crypto" else "EUR"
+
         return {
             "ticker": self.ticker_edit.text().strip().upper(),
             "quantity": float(self.quantity_edit.text()),
             "price_buy": float(self.buy_price_edit.text()),
             "date_buy": date_str,
-            "asset_type": self.asset_type_combo.currentText(),
+            "asset_type": asset_type,
+            "price_currency": price_currency,
         }
 
 
@@ -489,6 +504,18 @@ class InvestmentsTab(QWidget):
         self.refresh_btn = QPushButton("↻ Refresh")
         self.refresh_btn.clicked.connect(self._load_data)
         header_layout.addWidget(self.refresh_btn)
+
+        # Delete button
+        self.delete_btn = QPushButton("🗑️ Delete Selected")
+        self.delete_btn.setProperty("class", "danger")
+        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_btn.setToolTip(
+            "Delete selected asset(s) (or press Delete/Suppr key)\n"
+            "Shift+Click or Ctrl+Click to select multiple"
+        )
+        self.delete_btn.clicked.connect(self._on_delete_selected)
+        self.delete_btn.setEnabled(False)
+        header_layout.addWidget(self.delete_btn)
 
         layout.addLayout(header_layout)
 
@@ -607,8 +634,12 @@ class InvestmentsTab(QWidget):
         self.assets_table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
+        self.assets_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.assets_table.setAlternatingRowColors(True)
         self.assets_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        # Connect selection handler
+        self.assets_table.itemSelectionChanged.connect(self._on_selection_changed)
 
     def _load_data(self):
         """Load data from database and update UI."""
@@ -692,17 +723,21 @@ class InvestmentsTab(QWidget):
             )
             self.assets_table.setItem(row, 2, quantity_item)
 
-            # Buy Price
+            # Buy Price - show $ for crypto, € for stocks
             buy_price = asset.get("price_buy", 0)
-            buy_price_item = QTableWidgetItem(f"€{buy_price:,.2f}")
+            asset_type = asset.get("asset_type", "")
+            currency_symbol = "$" if asset_type == "crypto" else "€"
+            buy_price_item = QTableWidgetItem(f"{currency_symbol}{buy_price:,.2f}")
             buy_price_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
             self.assets_table.setItem(row, 3, buy_price_item)
 
-            # Current Price
+            # Current Price - show $ for crypto, € for stocks
             current_price = asset.get("current_price", 0)
-            current_price_item = QTableWidgetItem(f"€{current_price:,.2f}")
+            current_price_item = QTableWidgetItem(
+                f"{currency_symbol}{current_price:,.2f}"
+            )
             current_price_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
@@ -751,19 +786,25 @@ class InvestmentsTab(QWidget):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(5, 2, 5, 2)
-        layout.setSpacing(5)
+        layout.setSpacing(8)
 
         # Edit button
-        edit_btn = QPushButton("✏️")
-        edit_btn.setMaximumWidth(35)
-        edit_btn.setToolTip("Edit asset")
+        edit_btn = QPushButton("✏️ Edit")
+        edit_btn.setProperty("class", "secondary")
+        edit_btn.setMinimumWidth(70)
+        edit_btn.setMaximumWidth(85)
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.setToolTip("Edit this asset")
         edit_btn.clicked.connect(lambda: self._on_edit_asset(asset))
         layout.addWidget(edit_btn)
 
         # Delete button
-        delete_btn = QPushButton("🗑️")
-        delete_btn.setMaximumWidth(35)
-        delete_btn.setToolTip("Delete asset")
+        delete_btn = QPushButton("🗑️ Delete")
+        delete_btn.setProperty("class", "danger")
+        delete_btn.setMinimumWidth(80)
+        delete_btn.setMaximumWidth(95)
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.setToolTip("Delete this asset")
         delete_btn.clicked.connect(lambda: self._on_delete_asset(asset))
         layout.addWidget(delete_btn)
 
@@ -777,8 +818,10 @@ class InvestmentsTab(QWidget):
                 data = dialog.get_asset_data()
 
                 # Fetch current price before adding
+                # Fetch current price (crypto always in USD)
+                # Fetch current price (for cryptos we use USD, for others EUR)
                 if data["asset_type"] == "crypto":
-                    current_price = self.crypto_api.get_price(data["ticker"])
+                    current_price = self.crypto_api.get_price_usd(data["ticker"])
                 else:
                     current_price = self.stock_api.get_price(data["ticker"])
 
@@ -817,11 +860,23 @@ class InvestmentsTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
                 data = dialog.get_asset_data()
+
+                # Fetch current price if asset type is crypto (in USD) or stock (in EUR)
+                if data["asset_type"] == "crypto":
+                    current_price = self.crypto_api.get_price_usd(data["ticker"])
+                else:
+                    current_price = self.stock_api.get_price(data["ticker"])
+
+                # Update asset with all fields including price_currency
                 self.db.update_asset(
                     asset_id=asset["id"],
                     quantity=data["quantity"],
                     price_buy=data["price_buy"],
                     date_buy=data["date_buy"],
+                    price_currency=data.get("price_currency", "EUR"),
+                    current_price=current_price
+                    if current_price
+                    else asset.get("current_price"),
                 )
                 self._load_data()
                 self.data_changed.emit()
@@ -853,6 +908,86 @@ class InvestmentsTab(QWidget):
                 QMessageBox.critical(
                     self, "Error", f"Failed to delete asset:\n{str(e)}"
                 )
+
+    def _on_selection_changed(self):
+        """Handle table selection changes."""
+        has_selection = len(self.assets_table.selectedItems()) > 0
+        self.delete_btn.setEnabled(has_selection)
+
+    def _on_delete_selected(self):
+        """Delete currently selected asset(s)."""
+        selected_rows = self.assets_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        # Get all asset IDs
+        assets_to_delete = []
+        for index in selected_rows:
+            row = index.row()
+            type_item = self.assets_table.item(row, 0)
+            if type_item:
+                asset_id = type_item.data(Qt.ItemDataRole.UserRole)
+                if asset_id:
+                    ticker = self.assets_table.item(row, 1).text()
+                    assets_to_delete.append({"id": asset_id, "ticker": ticker})
+
+        if not assets_to_delete:
+            return
+
+        # Confirm deletion
+        count = len(assets_to_delete)
+        if count == 1:
+            message = (
+                f"Are you sure you want to delete {assets_to_delete[0]['ticker']}?"
+            )
+        else:
+            message = f"Are you sure you want to delete {count} assets?\n\nThis action cannot be undone."
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            deleted_count = 0
+            failed_count = 0
+
+            for asset in assets_to_delete:
+                try:
+                    self.db.delete_asset(asset["id"])
+                    deleted_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    print(f"Failed to delete asset {asset['id']}: {e}")
+
+            self._load_data()
+            self.data_changed.emit()
+
+            if failed_count == 0:
+                if count == 1:
+                    QMessageBox.information(
+                        self, "Success", "Asset deleted successfully!"
+                    )
+                else:
+                    QMessageBox.information(
+                        self, "Success", f"{deleted_count} assets deleted successfully!"
+                    )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Partial Success",
+                    f"{deleted_count} asset(s) deleted, {failed_count} failed.",
+                )
+
+    def keyPressEvent(self, event):
+        """Handle key press events for Delete/Suppr key."""
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if self.assets_table.selectedItems():
+                self._on_delete_selected()
+        else:
+            super().keyPressEvent(event)
 
     def _on_refresh_prices(self):
         """Handle refresh prices button click."""

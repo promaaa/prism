@@ -27,7 +27,7 @@ class CryptoAPI:
         "BTC": "bitcoin",
         "ETH": "ethereum",
         "USDT": "tether",
-        "BNB": "binancecoin",
+        "BNB": "binance-coin",
         "SOL": "solana",
         "XRP": "ripple",
         "USDC": "usd-coin",
@@ -36,7 +36,7 @@ class CryptoAPI:
         "TRX": "tron",
         "AVAX": "avalanche-2",
         "DOT": "polkadot",
-        "MATIC": "matic-network",
+        "MATIC": "polygon-ecosystem-token",
         "LINK": "chainlink",
         "UNI": "uniswap",
         "LTC": "litecoin",
@@ -49,6 +49,49 @@ class CryptoAPI:
         "AGIX": "singularitynet",
         "OCEAN": "ocean-protocol",
         "RNDR": "render-token",
+        # Layer-2 and Scaling Solutions
+        "ARB": "arbitrum",
+        "OP": "optimism",
+        "MATIC": "polygon-ecosystem-token",
+        # DeFi Tokens
+        "AAVE": "aave",
+        "MKR": "maker",
+        "SNX": "synthetix-network-token",
+        "CRV": "curve-dao-token",
+        "COMP": "compound",
+        "SUSHI": "sushi",
+        "YFI": "yearn-finance",
+        "1INCH": "1inch",
+        # Layer-1 Blockchains
+        "NEAR": "near",
+        "FTM": "fantom",
+        "EGLD": "elrond-erd-2",
+        "FLOW": "flow",
+        "ICP": "internet-computer",
+        "APT": "aptos",
+        "SUI": "sui",
+        "SEI": "sei-network",
+        # Meme & Community Coins
+        "SHIB": "shiba-inu",
+        "PEPE": "pepe",
+        "FLOKI": "floki",
+        "BONK": "bonk",
+        # Stablecoins
+        "DAI": "dai",
+        "TUSD": "true-usd",
+        "USDD": "usdd",
+        "FRAX": "frax",
+        # Others
+        "SAND": "the-sandbox",
+        "MANA": "decentraland",
+        "AXS": "axie-infinity",
+        "APE": "apecoin",
+        "GRT": "the-graph",
+        "IMX": "immutable-x",
+        "LDO": "lido-dao",
+        "INJ": "injective-protocol",
+        "RUNE": "thorchain",
+        "QNT": "quant-network",
     }
 
     def __init__(self, timeout: int = 10):
@@ -421,6 +464,67 @@ class CryptoAPI:
         """
         self.TICKER_TO_ID[ticker.upper()] = coingecko_id
         logger.info(f"Added custom mapping: {ticker.upper()} -> {coingecko_id}")
+
+    # USD-specific convenience methods
+    def get_price_usd(self, ticker: str, use_cache: bool = True) -> Optional[float]:
+        """
+        Get current price for a cryptocurrency in USD.
+
+        Args:
+            ticker: Cryptocurrency ticker (e.g., "BTC", "ETH")
+            use_cache: Whether to use cached prices
+
+        Returns:
+            Optional[float]: Current price in USD or None if fetch fails
+        """
+        return self.get_price(ticker, currency="usd", use_cache=use_cache)
+
+    def get_multiple_prices_usd(
+        self, tickers: List[str], use_cache: bool = True
+    ) -> Dict[str, Optional[float]]:
+        """
+        Get current prices for multiple cryptocurrencies in USD.
+
+        Args:
+            tickers: List of cryptocurrency tickers
+            use_cache: Whether to use cached prices
+
+        Returns:
+            Dict[str, Optional[float]]: Dictionary mapping tickers to USD prices
+        """
+        return self.get_multiple_prices(tickers, currency="usd", use_cache=use_cache)
+
+    async def get_price_usd_async(
+        self, ticker: str, use_cache: bool = True
+    ) -> Optional[float]:
+        """
+        Get current price for a cryptocurrency in USD (asynchronous).
+
+        Args:
+            ticker: Cryptocurrency ticker (e.g., "BTC", "ETH")
+            use_cache: Whether to use cached prices
+
+        Returns:
+            Optional[float]: Current price in USD or None if fetch fails
+        """
+        return await self.get_price_async(ticker, currency="usd", use_cache=use_cache)
+
+    async def get_multiple_prices_usd_async(
+        self, tickers: List[str], use_cache: bool = True
+    ) -> Dict[str, Optional[float]]:
+        """
+        Get current prices for multiple cryptocurrencies in USD (asynchronous).
+
+        Args:
+            tickers: List of cryptocurrency tickers
+            use_cache: Whether to use cached prices
+
+        Returns:
+            Dict[str, Optional[float]]: Dictionary mapping tickers to USD prices
+        """
+        return await self.get_multiple_prices_async(
+            tickers, currency="usd", use_cache=use_cache
+        )
 
 
 # Example usage

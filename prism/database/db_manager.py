@@ -21,17 +21,43 @@ class DatabaseManager:
     Provides methods for CRUD operations on transactions, assets, and orders.
     """
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path | str] = None):
         """
         Initialize the DatabaseManager.
 
         Args:
-            db_path: Optional custom path to database file.
+            db_path: Optional custom path to database file (Path or str).
                     If None, uses default application support directory.
         """
-        self.db_path = db_path if db_path else get_database_path()
+        if db_path is None:
+            self.db_path = get_database_path()
+        elif isinstance(db_path, str):
+            self.db_path = Path(db_path)
+        else:
+            self.db_path = db_path
         logger.info(f"Initializing DatabaseManager with path: {self.db_path}")
         self._ensure_connection()
+        # Persistent connection for backward compatibility with new modules
+        self._conn = None
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """
+        Get or create a persistent database connection.
+
+        Returns:
+            sqlite3.Connection: Database connection with row factory enabled
+        """
+        if self._conn is None:
+            self._conn = self._get_connection()
+        return self._conn
+
+    def close(self) -> None:
+        """Close the database connection if it exists."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+            logger.debug("Database connection closed")
 
     def _ensure_connection(self) -> None:
         """Ensure database file exists and is accessible."""
@@ -381,6 +407,7 @@ class DatabaseManager:
         date_buy: str,
         asset_type: str,
         current_price: Optional[float] = None,
+        price_currency: str = "EUR",
     ) -> int:
         """
         Add a new asset to the database.
@@ -392,34 +419,43 @@ class DatabaseManager:
             date_buy: Purchase date in YYYY-MM-DD format
             asset_type: Type of asset ("crypto", "stock", or "bond")
             current_price: Optional current market price
+            price_currency: Currency of the purchase price ("EUR" or "USD", default: "EUR")
 
         Returns:
             int: ID of the newly created asset
 
         Raises:
-            ValueError: If asset_type is not valid
+            ValueError: If asset_type is not valid or price_currency is not valid
         """
         if asset_type not in ("crypto", "stock", "bond"):
             raise ValueError("asset_type must be 'crypto', 'stock', or 'bond'")
+
+        if price_currency not in ("EUR", "USD"):
+            raise ValueError("price_currency must be 'EUR' or 'USD'")
 
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute(
             """
-            INSERT INTO assets (ticker, quantity, price_buy, date_buy, current_price, asset_type)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO assets (ticker, quantity, price_buy, date_buy, current_price, asset_type, price_currency)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (ticker, quantity, price_buy, date_buy, current_price, asset_type),
+            (
+                ticker,
+                quantity,
+                price_buy,
+                date_buy,
+                current_price,
+                asset_type,
+                price_currency,
+            ),
         )
 
         asset_id = cursor.lastrowid
         conn.commit()
-        order_id = cursor.lastrowid
         conn.close()
 
-        logger.info(f"Order added successfully with ID: {order_id}")
-        return order_id
         logger.info(f"Asset added successfully with ID: {asset_id}")
         return asset_id
 
@@ -479,6 +515,7 @@ class DatabaseManager:
         date_buy: Optional[str] = None,
         current_price: Optional[float] = None,
         asset_type: Optional[str] = None,
+        price_currency: Optional[str] = None,
     ) -> bool:
         """
         Update an asset.
@@ -491,12 +528,16 @@ class DatabaseManager:
             date_buy: New buy date (optional)
             current_price: New current price (optional)
             asset_type: New type (optional)
+            price_currency: New price currency (optional, "EUR" or "USD")
 
         Returns:
             bool: True if update was successful, False otherwise
         """
         if asset_type and asset_type not in ("crypto", "stock", "bond"):
             raise ValueError("asset_type must be 'crypto', 'stock', or 'bond'")
+
+        if price_currency and price_currency not in ("EUR", "USD"):
+            raise ValueError("price_currency must be 'EUR' or 'USD'")
 
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -518,12 +559,17 @@ class DatabaseManager:
             current_price if current_price is not None else current["current_price"]
         )
         new_asset_type = asset_type if asset_type is not None else current["asset_type"]
+        new_price_currency = (
+            price_currency
+            if price_currency is not None
+            else current.get("price_currency", "EUR")
+        )
 
         cursor.execute(
             """
             UPDATE assets
             SET ticker = ?, quantity = ?, price_buy = ?, date_buy = ?,
-                current_price = ?, asset_type = ?
+                current_price = ?, asset_type = ?, price_currency = ?
             WHERE id = ?
             """,
             (
@@ -533,6 +579,7 @@ class DatabaseManager:
                 new_date_buy,
                 new_current_price,
                 new_asset_type,
+                new_price_currency,
                 asset_id,
             ),
         )

@@ -256,6 +256,18 @@ class OrdersTab(QWidget):
         self.refresh_btn.clicked.connect(self._load_data)
         header_layout.addWidget(self.refresh_btn)
 
+        # Delete button
+        self.delete_btn = QPushButton("🗑️ Delete Selected")
+        self.delete_btn.setProperty("class", "danger")
+        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_btn.setToolTip(
+            "Delete selected order(s) (or press Delete/Suppr key)\n"
+            "Shift+Click or Ctrl+Click to select multiple"
+        )
+        self.delete_btn.clicked.connect(self._on_delete_selected)
+        self.delete_btn.setEnabled(False)  # Disabled until a row is selected
+        header_layout.addWidget(self.delete_btn)
+
         layout.addLayout(header_layout)
 
         # Summary cards
@@ -395,8 +407,12 @@ class OrdersTab(QWidget):
         self.orders_table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
+        self.orders_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.orders_table.setAlternatingRowColors(True)
         self.orders_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        # Connect selection change to enable/disable delete button
+        self.orders_table.itemSelectionChanged.connect(self._on_selection_changed)
 
     def _load_data(self):
         """Load data from database and update UI."""
@@ -465,6 +481,8 @@ class OrdersTab(QWidget):
             # Ticker
             ticker_item = QTableWidgetItem(order.get("ticker", ""))
             ticker_item.setFont(QFont("Monospace", 10, QFont.Weight.Bold))
+            # Store order ID in the first column for later retrieval
+            ticker_item.setData(Qt.ItemDataRole.UserRole, order.get("id"))
             self.orders_table.setItem(row, 0, ticker_item)
 
             # Order Type
@@ -526,31 +544,40 @@ class OrdersTab(QWidget):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(5, 2, 5, 2)
-        layout.setSpacing(5)
+        layout.setSpacing(8)
 
         # Edit button
-        edit_btn = QPushButton("✏️")
-        edit_btn.setMaximumWidth(35)
-        edit_btn.setToolTip("Edit order")
+        edit_btn = QPushButton("✏️ Edit")
+        edit_btn.setProperty("class", "secondary")
+        edit_btn.setMinimumWidth(70)
+        edit_btn.setMaximumWidth(85)
+        edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        edit_btn.setToolTip("Edit this order")
         edit_btn.clicked.connect(lambda: self._on_edit_order(order))
         layout.addWidget(edit_btn)
 
         # Toggle status button
         status = order.get("status", "open")
         if status == "open":
-            toggle_btn = QPushButton("✓")
+            toggle_btn = QPushButton("✓ Close")
             toggle_btn.setToolTip("Mark as closed")
         else:
-            toggle_btn = QPushButton("↻")
+            toggle_btn = QPushButton("↻ Reopen")
             toggle_btn.setToolTip("Mark as open")
-        toggle_btn.setMaximumWidth(35)
+        toggle_btn.setProperty("class", "secondary")
+        toggle_btn.setMinimumWidth(75)
+        toggle_btn.setMaximumWidth(90)
+        toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         toggle_btn.clicked.connect(lambda: self._on_toggle_status(order))
         layout.addWidget(toggle_btn)
 
         # Delete button
-        delete_btn = QPushButton("🗑️")
-        delete_btn.setMaximumWidth(35)
-        delete_btn.setToolTip("Delete order")
+        delete_btn = QPushButton("🗑️ Delete")
+        delete_btn.setProperty("class", "danger")
+        delete_btn.setMinimumWidth(80)
+        delete_btn.setMaximumWidth(95)
+        delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_btn.setToolTip("Delete this order")
         delete_btn.clicked.connect(lambda: self._on_delete_order(order))
         layout.addWidget(delete_btn)
 
@@ -714,3 +741,104 @@ class OrdersTab(QWidget):
     def refresh(self):
         """Public method to refresh the tab data."""
         self._load_data()
+
+    def _on_selection_changed(self):
+        """Handle table selection changes to enable/disable delete button."""
+        has_selection = len(self.orders_table.selectedItems()) > 0
+        self.delete_btn.setEnabled(has_selection)
+
+    def _on_delete_selected(self):
+        """Delete the currently selected order(s)."""
+        selected_rows = self.orders_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+
+        # Get all order IDs from selected rows
+        orders_to_delete = []
+        for index in selected_rows:
+            row = index.row()
+            ticker_item = self.orders_table.item(row, 0)
+            if ticker_item:
+                order_id = ticker_item.data(Qt.ItemDataRole.UserRole)
+                if order_id:
+                    ticker = ticker_item.text()
+                    order_type = self.orders_table.item(row, 1).text()
+                    quantity = self.orders_table.item(row, 2).text()
+                    orders_to_delete.append(
+                        {
+                            "id": order_id,
+                            "ticker": ticker,
+                            "type": order_type,
+                            "quantity": quantity,
+                        }
+                    )
+
+        if not orders_to_delete:
+            return
+
+        # Confirm deletion
+        count = len(orders_to_delete)
+        if count == 1:
+            order = orders_to_delete[0]
+            message = (
+                f"Are you sure you want to delete this order?\n\n"
+                f"Ticker: {order['ticker']}\n"
+                f"Type: {order['type']}\n"
+                f"Quantity: {order['quantity']}"
+            )
+        else:
+            message = (
+                f"Are you sure you want to delete {count} orders?\n\n"
+                f"This action cannot be undone."
+            )
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            deleted_count = 0
+            failed_count = 0
+
+            for order in orders_to_delete:
+                try:
+                    self.db.delete_order(order["id"])
+                    deleted_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    print(f"Failed to delete order {order['id']}: {e}")
+
+            # Reload data
+            self._load_data()
+            self.data_changed.emit()
+
+            # Show result message
+            if failed_count == 0:
+                if count == 1:
+                    QMessageBox.information(
+                        self, "Success", "Order deleted successfully!"
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Success",
+                        f"{deleted_count} orders deleted successfully!",
+                    )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Partial Success",
+                    f"{deleted_count} order(s) deleted, {failed_count} failed.",
+                )
+
+    def keyPressEvent(self, event):
+        """Handle key press events for Delete/Suppr key."""
+        # If Delete or Backspace key is pressed (Key_Backspace is often the Mac Delete key)
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            if self.orders_table.selectedItems():
+                self._on_delete_selected()
+        else:
+            super().keyPressEvent(event)
