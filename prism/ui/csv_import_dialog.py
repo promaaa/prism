@@ -344,12 +344,8 @@ class CSVImportDialog(QDialog):
                 "See details below for any errors.",
             )
 
-            # Emit signal to parent to refresh data
-            if self.parent():
-                try:
-                    self.parent()._refresh_ui()
-                except Exception:
-                    pass
+            # Accept dialog to signal success to parent
+            self.accept()
         else:
             QMessageBox.warning(
                 self,
