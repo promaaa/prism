@@ -30,6 +30,7 @@ from PyQt6.QtGui import QColor, QFont
 
 from ..database.db_manager import DatabaseManager
 from .tooltips import Tooltips, EXAMPLES
+from .csv_import_dialog import CSVImportDialog
 
 
 class TransactionDialog(QDialog):
@@ -264,6 +265,12 @@ class PersonalTab(QWidget):
         self.refresh_btn.setToolTip(Tooltips.PERSONAL_TAB["refresh_button"])
         self.refresh_btn.clicked.connect(self._load_data)
         header_layout.addWidget(self.refresh_btn)
+
+        # CSV Import button
+        self.import_csv_btn = QPushButton("📄 Import CSV")
+        self.import_csv_btn.setToolTip("Import transactions from CSV file")
+        self.import_csv_btn.clicked.connect(self._on_import_csv)
+        header_layout.addWidget(self.import_csv_btn)
 
         # Delete button
         self.delete_btn = QPushButton("🗑️ Delete Selected")
@@ -671,6 +678,20 @@ class PersonalTab(QWidget):
                     "Partial Success",
                     f"{deleted_count} transaction(s) deleted, {failed_count} failed.",
                 )
+
+    def _on_import_csv(self):
+        """Handle CSV import button click."""
+        try:
+            dialog = CSVImportDialog(self.db, parent=self)
+            result = dialog.exec()
+            if result == QDialog.DialogCode.Accepted:
+                # Refresh data after successful import
+                self._load_data()
+                self.data_changed.emit()
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error", f"Failed to open CSV import dialog:\n{str(e)}"
+            )
 
     def keyPressEvent(self, event):
         """Handle key press events for Delete/Suppr key."""

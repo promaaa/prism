@@ -33,6 +33,16 @@ class CSVImporter:
         "%m-%d-%Y",
     ]
 
+    # BoursoBank CSV format mapping
+    BOURSO_BANK_MAPPING = {
+        "dateop": "date",  # Operation date
+        "dateval": "date",  # Value date (fallback)
+        "label": "description",  # Transaction label
+        "category": "category",  # Category
+        "amount": "amount",  # Amount
+        "comment": "description",  # Comment (additional description)
+    }
+
     def __init__(self, db_manager):
         """
         Initialize CSV importer.
@@ -41,6 +51,7 @@ class CSVImporter:
             db_manager: DatabaseManager instance for saving transactions
         """
         self.db_manager = db_manager
+        self.is_boursobank_format = False
 
     def validate_csv_file(self, file_path: str) -> Tuple[bool, str]:
         """
@@ -70,8 +81,19 @@ class CSVImporter:
 
         # Try to read and validate headers
         try:
+            # First try with comma separator
             with open(file_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
+                sample = f.read(1024)
+                f.seek(0)
+
+                # Detect separator (semicolon for French format, comma for standard)
+                if ";" in sample and "," not in sample.split("\n")[0]:
+                    # Likely BoursoBank format with semicolon
+                    reader = csv.DictReader(f, delimiter=";")
+                    self.is_boursobank_format = True
+                else:
+                    reader = csv.DictReader(f)
+
                 headers = reader.fieldnames
 
                 if not headers:
@@ -80,16 +102,36 @@ class CSVImporter:
                 # Normalize headers (lowercase, strip whitespace)
                 headers = [h.lower().strip() for h in headers]
 
-                # Check for required fields
-                missing_fields = [
-                    field for field in self.REQUIRED_FIELDS if field not in headers
+                # Check if this is BoursoBank format
+                boursobank_indicators = [
+                    "dateop",
+                    "dateval",
+                    "supplierfound",
+                    "accountnum",
                 ]
+                if any(indicator in headers for indicator in boursobank_indicators):
+                    self.is_boursobank_format = True
 
-                if missing_fields:
-                    return (
-                        False,
-                        f"Missing required columns: {', '.join(missing_fields)}",
-                    )
+                # Check for required fields (adapt for BoursoBank format)
+                if self.is_boursobank_format:
+                    # For BoursoBank, we need dateop/dateval and amount
+                    has_date = "dateop" in headers or "dateval" in headers
+                    has_amount = "amount" in headers
+                    if not (has_date and has_amount):
+                        return (
+                            False,
+                            "BoursoBank CSV must have 'dateOp'/'dateVal' and 'amount' columns",
+                        )
+                else:
+                    # Standard format validation
+                    missing_fields = [
+                        field for field in self.REQUIRED_FIELDS if field not in headers
+                    ]
+                    if missing_fields:
+                        return (
+                            False,
+                            f"Missing required columns: {', '.join(missing_fields)}",
+                        )
 
             return True, ""
 
@@ -123,7 +165,7 @@ class CSVImporter:
 
     def parse_amount(self, amount_str: str) -> Optional[float]:
         """
-        Parse amount string, handling various formats.
+        Parse amount string, handling various formats including French decimal format.
 
         Args:
             amount_str: Amount string to parse
@@ -133,10 +175,19 @@ class CSVImporter:
         """
         # Remove common formatting characters
         amount_str = amount_str.strip()
-        amount_str = amount_str.replace("€", "")
-        amount_str = amount_str.replace("$", "")
-        amount_str = amount_str.replace(",", ".")
-        amount_str = amount_str.replace(" ", "")
+
+        # Handle BoursoBank format (French decimal with comma)
+        if self.is_boursobank_format:
+            # Remove quotes if present
+            amount_str = amount_str.strip('"')
+            # Convert French decimal (comma) to standard decimal (dot)
+            amount_str = amount_str.replace(",", ".")
+        else:
+            # Standard format
+            amount_str = amount_str.replace("€", "")
+            amount_str = amount_str.replace("$", "")
+            amount_str = amount_str.replace(",", ".")
+            amount_str = amount_str.replace(" ", "")
 
         # Handle negative amounts in parentheses (accounting format)
         if amount_str.startswith("(") and amount_str.endswith(")"):
@@ -200,7 +251,9 @@ class CSVImporter:
 
         try:
             with open(file_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
+                # Use appropriate delimiter based on format detection
+                delimiter = ";" if self.is_boursobank_format else ","
+                reader = csv.DictReader(f, delimiter=delimiter)
 
                 # Normalize headers
                 reader.fieldnames = [h.lower().strip() for h in reader.fieldnames]
@@ -209,6 +262,65 @@ class CSVImporter:
                     reader, start=2
                 ):  # Start at 2 (1 is header)
                     try:
+                        # Handle BoursoBank format mapping
+                        if self.is_boursobank_format:
+                            # Map BoursoBank columns to standard format
+                            mapped_row = {}
+                            for key, value in row.items():
+                                # Map BoursoBank column names to standard names
+                                if key in self.BOURSO_BANK_MAPPING:
+                                    mapped_key = self.BOURSO_BANK_MAPPING[key]
+                                    mapped_row[mapped_key] = value
+                                else:
+                                    mapped_row[key] = value
+
+                            # For BoursoBank, use dateOp first, then dateVal as fallback
+                            if not mapped_row.get("date"):
+                                mapped_row["date"] = row.get("dateval", "")
+
+                            # Combine label and comment for description
+                            label = row.get("label", "").strip()
+                            comment = row.get("comment", "").strip()
+                            if label and comment:
+                                mapped_row["description"] = f"{label} - {comment}"
+                            elif label:
+                                mapped_row["description"] = label
+                            elif comment:
+                                mapped_row["description"] = comment
+
+                            # Map BoursoBank categories to standard categories
+                            category = row.get("category", "").strip()
+                            if category:
+                                # Map common BoursoBank categories to standard ones
+                                category_mapping = {
+                                    "Alimentation": "Food",
+                                    "Transports longue distance (avions, trains…)": "Transport",
+                                    "Virements reçus": "Income",
+                                    "Virements émis": "Transfer",
+                                    "Téléphonie (fixe et mobile)": "Utilities",
+                                    "Restaurants, bars, discothèques…": "Entertainment",
+                                    "Laverie, Pressing …": "Household",
+                                    "Pharmacie et laboratoire": "Healthcare",
+                                    "Vêtements et accessoires": "Shopping",
+                                    "Energie (électricité, gaz, fuel, chauffage…)": "Utilities",
+                                    "Impôts & Taxes - Autres": "Taxes",
+                                    "Allocations familiales": "Income",
+                                    "Dépôts (cartes/chèques/espèces)": "Income",
+                                    "Péages": "Transport",
+                                    "Carburant": "Transport",
+                                    "Hébergement (hôtels, camping…)": "Travel",
+                                    "Equipements sportifs et artistiques": "Sports",
+                                    "Dons et Cadeaux": "Charity",
+                                    "Logement - Autres": "Housing",
+                                    "Revenus épargne financière (retraite, prévoyance, PEA, assurance-vie…)": "Investment",
+                                    "Vie Quotidienne - Autres": "Other",
+                                }
+                                mapped_row["category"] = category_mapping.get(
+                                    category, category
+                                )
+
+                            row = mapped_row
+
                         # Parse date
                         date_str = row.get("date", "").strip()
                         if not date_str:
@@ -243,9 +355,13 @@ class CSVImporter:
                         # Parse category
                         category = row.get("category", "").strip()
                         if not category:
-                            errors.append(f"Row {row_num}: Missing category")
-                            failed += 1
-                            continue
+                            # For BoursoBank, use a default category if none provided
+                            if self.is_boursobank_format:
+                                category = "Other"
+                            else:
+                                errors.append(f"Row {row_num}: Missing category")
+                                failed += 1
+                                continue
                         category = self.normalize_category(category)
 
                         # Parse type (optional)
