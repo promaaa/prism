@@ -96,6 +96,27 @@ class StockAPI:
 
         normalized_ticker = self._normalize_ticker(ticker)
 
+        # Use yfinance download to get the most recent price
+        try:
+            data = yf.download(normalized_ticker, period="1d", interval="1m")
+            if not data.empty:
+                price = data["Close"].iloc[-1]
+                if price > 0:
+                    self._cache[ticker] = {
+                        "price": price,
+                        "currency": "EUR",  # Assuming EUR for now, should be improved
+                        "name": normalized_ticker,
+                        "used_ticker": normalized_ticker,
+                    }
+                    self._cache_timestamp[ticker] = datetime.now()
+                    logger.info(
+                        f"Successfully fetched price for {ticker} using yf.download: {price}"
+                    )
+                    return price
+        except Exception as e:
+            logger.debug(f"yf.download failed for {ticker}: {e}")
+
+        # Fallback to original method if yf.download fails
         # Try multiple approaches for European stocks
         tickers_to_try = [normalized_ticker]
 
@@ -144,8 +165,8 @@ class StockAPI:
                 # Try different price fields in order of preference
                 price = None
                 price_fields = [
-                    "currentPrice",
                     "regularMarketPrice",
+                    "currentPrice",
                     "previousClose",
                     "ask",
                     "bid",

@@ -9,7 +9,8 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, date
 
 from .schema import get_database_path
-from ..utils.logger import get_logger, log_exception, log_performance, LogContext
+from ..utils.logger import get_logger, log_exception, log_performance
+from ..utils.config import get_config
 
 # Initialize logger for this module
 logger = get_logger("database")
@@ -164,15 +165,19 @@ class DatabaseManager:
         category: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Get all transactions with optional filters.
+        Get all transactions with optional filters and pagination.
 
         Args:
             transaction_type: Filter by type ("personal" or "investment")
             category: Filter by category
             start_date: Filter by start date (inclusive)
             end_date: Filter by end date (inclusive)
+            limit: Maximum number of records to return
+            offset: Number of records to skip
 
         Returns:
             List[Dict]: List of transaction dictionaries
@@ -200,6 +205,14 @@ class DatabaseManager:
             params.append(end_date)
 
         query += " ORDER BY date DESC"
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        if offset is not None:
+            query += " OFFSET ?"
+            params.append(offset)
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -479,12 +492,19 @@ class DatabaseManager:
 
         return dict(row) if row else None
 
-    def get_all_assets(self, asset_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_all_assets(
+        self,
+        asset_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Get all assets with optional type filter.
+        Get all assets with optional type filter and pagination.
 
         Args:
             asset_type: Filter by type ("crypto", "stock", or "bond")
+            limit: Maximum number of records to return
+            offset: Number of records to skip
 
         Returns:
             List[Dict]: List of asset dictionaries
@@ -492,18 +512,28 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        if asset_type:
-            cursor.execute(
-                "SELECT * FROM assets WHERE asset_type = ? ORDER BY ticker",
-                (asset_type,),
-            )
-        else:
-            cursor.execute("SELECT * FROM assets ORDER BY ticker")
+        query = "SELECT * FROM assets WHERE 1=1"
+        params = []
 
+        if asset_type:
+            query += " AND asset_type = ?"
+            params.append(asset_type)
+
+        query += " ORDER BY ticker"
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        if offset is not None:
+            query += " OFFSET ?"
+            params.append(offset)
+
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
 
-        logger.debug(f"Retrieved {len(rows)} orders")
+        logger.debug(f"Retrieved {len(rows)} assets")
         return [dict(row) for row in rows]
 
     def update_asset(
@@ -609,6 +639,31 @@ class DatabaseManager:
         cursor.execute(
             "UPDATE assets SET current_price = ? WHERE id = ?",
             (current_price, asset_id),
+        )
+
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+
+        return success
+
+    def update_asset_ticker(self, asset_id: int, new_ticker: str) -> bool:
+        """
+        Update the ticker of an asset.
+
+        Args:
+            asset_id: Asset ID
+            new_ticker: New ticker
+
+        Returns:
+            bool: True if update was successful, False otherwise
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "UPDATE assets SET ticker = ? WHERE id = ?",
+            (new_ticker, asset_id),
         )
 
         conn.commit()
@@ -912,14 +967,18 @@ class DatabaseManager:
         ticker: Optional[str] = None,
         status: Optional[str] = None,
         order_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Get all orders with optional filters.
+        Get all orders with optional filters and pagination.
 
         Args:
             ticker: Filter by ticker
             status: Filter by status ("open" or "closed")
             order_type: Filter by type ("buy" or "sell")
+            limit: Maximum number of records to return
+            offset: Number of records to skip
 
         Returns:
             List[Dict]: List of order dictionaries
@@ -943,6 +1002,14 @@ class DatabaseManager:
             params.append(order_type)
 
         query += " ORDER BY date DESC"
+
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        if offset is not None:
+            query += " OFFSET ?"
+            params.append(offset)
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -1074,19 +1141,136 @@ class DatabaseManager:
 
         stats = {}
 
-        cursor.execute("SELECT COUNT(*) as count FROM transactions")
-        stats["transactions"] = cursor.fetchone()["count"]
+        # Use a single query to get all counts for better performance
+        cursor.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM transactions) as transactions,
+                (SELECT COUNT(*) FROM assets) as assets,
+                (SELECT COUNT(*) FROM orders) as orders,
+                (SELECT COUNT(*) FROM historical_prices) as historical_prices
+        """)
 
-        cursor.execute("SELECT COUNT(*) as count FROM assets")
-        stats["assets"] = cursor.fetchone()["count"]
-
-        cursor.execute("SELECT COUNT(*) as count FROM orders")
-        stats["orders"] = cursor.fetchone()["count"]
+        row = cursor.fetchone()
+        stats = dict(row)
 
         conn.close()
 
         logger.debug(f"Database stats: {stats}")
         return stats
+
+    def get_transaction_count(
+        self,
+        transaction_type: Optional[str] = None,
+        category: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> int:
+        """
+        Get count of transactions with optional filters.
+
+        Args:
+            transaction_type: Filter by type ("personal" or "investment")
+            category: Filter by category
+            start_date: Filter by start date (inclusive)
+            end_date: Filter by end date (inclusive)
+
+        Returns:
+            int: Number of matching transactions
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        query = "SELECT COUNT(*) as count FROM transactions WHERE 1=1"
+        params = []
+
+        if transaction_type:
+            query += " AND type = ?"
+            params.append(transaction_type)
+
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+
+        if start_date:
+            query += " AND date >= ?"
+            params.append(start_date)
+
+        if end_date:
+            query += " AND date <= ?"
+            params.append(end_date)
+
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        conn.close()
+
+        return result["count"]
+
+    def get_asset_count(self, asset_type: Optional[str] = None) -> int:
+        """
+        Get count of assets with optional type filter.
+
+        Args:
+            asset_type: Filter by type ("crypto", "stock", or "bond")
+
+        Returns:
+            int: Number of matching assets
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        query = "SELECT COUNT(*) as count FROM assets WHERE 1=1"
+        params = []
+
+        if asset_type:
+            query += " AND asset_type = ?"
+            params.append(asset_type)
+
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        conn.close()
+
+        return result["count"]
+
+    def get_order_count(
+        self,
+        ticker: Optional[str] = None,
+        status: Optional[str] = None,
+        order_type: Optional[str] = None,
+    ) -> int:
+        """
+        Get count of orders with optional filters.
+
+        Args:
+            ticker: Filter by ticker
+            status: Filter by status ("open" or "closed")
+            order_type: Filter by type ("buy" or "sell")
+
+        Returns:
+            int: Number of matching orders
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        query = "SELECT COUNT(*) as count FROM orders WHERE 1=1"
+        params = []
+
+        if ticker:
+            query += " AND ticker = ?"
+            params.append(ticker)
+
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+
+        if order_type:
+            query += " AND order_type = ?"
+            params.append(order_type)
+
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        conn.close()
+
+        return result["count"]
 
     def backup_database(self, backup_path: Path) -> bool:
         """

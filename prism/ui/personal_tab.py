@@ -31,6 +31,7 @@ from PyQt6.QtGui import QColor, QFont
 from ..database.db_manager import DatabaseManager
 from .tooltips import Tooltips, EXAMPLES
 from .csv_import_dialog import CSVImportDialog
+from ..utils.config import get_ui_page_size
 
 
 class TransactionDialog(QDialog):
@@ -295,9 +296,18 @@ class PersonalTab(QWidget):
         separator.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(separator)
 
+        # Pagination controls
+        self._create_pagination_controls()
+        layout.addWidget(self.pagination_widget)
+
         # Transaction table
         self._create_transaction_table()
         layout.addWidget(self.transaction_table, 1)
+
+        # Initialize pagination state
+        self.current_page = 0
+        self.page_size = get_ui_page_size("personal")  # Configurable page size
+        self.total_transactions = 0
 
     def _create_summary_section(self) -> QWidget:
         """Create summary cards section."""
@@ -401,6 +411,49 @@ class PersonalTab(QWidget):
         # Connect selection change to enable/disable delete button
         self.transaction_table.itemSelectionChanged.connect(self._on_selection_changed)
 
+    def _create_pagination_controls(self):
+        """Create pagination controls widget."""
+        self.pagination_widget = QWidget()
+        layout = QHBoxLayout(self.pagination_widget)
+        layout.setContentsMargins(0, 10, 0, 10)
+
+        # Page size selector
+        layout.addWidget(QLabel("Show:"))
+        self.page_size_combo = QComboBox()
+        self.page_size_combo.addItems(["50", "100", "200", "All"])
+        self.page_size_combo.setCurrentText("100")
+        self.page_size_combo.currentTextChanged.connect(self._on_page_size_changed)
+        layout.addWidget(self.page_size_combo)
+
+        layout.addStretch()
+
+        # Navigation buttons
+        self.first_btn = QPushButton("⏮️ First")
+        self.first_btn.clicked.connect(self._on_first_page)
+        self.first_btn.setEnabled(False)
+        layout.addWidget(self.first_btn)
+
+        self.prev_btn = QPushButton("◀️ Previous")
+        self.prev_btn.clicked.connect(self._on_prev_page)
+        self.prev_btn.setEnabled(False)
+        layout.addWidget(self.prev_btn)
+
+        # Page info
+        self.page_info_label = QLabel("Page 1 of 1")
+        layout.addWidget(self.page_info_label)
+
+        self.next_btn = QPushButton("Next ▶️")
+        self.next_btn.clicked.connect(self._on_next_page)
+        self.next_btn.setEnabled(False)
+        layout.addWidget(self.next_btn)
+
+        self.last_btn = QPushButton("Last ⏭️")
+        self.last_btn.clicked.connect(self._on_last_page)
+        self.last_btn.setEnabled(False)
+        layout.addWidget(self.last_btn)
+
+        self.pagination_widget.setVisible(False)  # Hidden by default
+
     def _load_data(self):
         """Load data from database and update UI."""
         try:
@@ -408,19 +461,25 @@ class PersonalTab(QWidget):
             balance = self.db.get_balance()
             self._update_card_value(self.balance_card, f"€{balance:,.2f}")
 
-            # Get all transactions
-            transactions = self.db.get_all_transactions()
+            # Get total transaction count
+            self.total_transactions = self.db.get_transaction_count()
 
-            # Calculate income and expenses
-            income = sum(t["amount"] for t in transactions if t["amount"] > 0)
-            expenses = sum(abs(t["amount"]) for t in transactions if t["amount"] < 0)
+            # Calculate income and expenses from all transactions
+            all_transactions = self.db.get_all_transactions()
+            income = sum(t["amount"] for t in all_transactions if t["amount"] > 0)
+            expenses = sum(
+                abs(t["amount"]) for t in all_transactions if t["amount"] < 0
+            )
 
             self._update_card_value(self.income_card, f"€{income:,.2f}")
             self._update_card_value(self.expenses_card, f"€{expenses:,.2f}")
-            self._update_card_value(self.count_card, str(len(transactions)))
+            self._update_card_value(self.count_card, str(self.total_transactions))
 
-            # Update table
-            self._populate_table(transactions)
+            # Update pagination controls
+            self._update_pagination_controls()
+
+            # Load paginated transactions
+            self._load_transactions_page()
 
         except Exception as e:
             QMessageBox.critical(
@@ -434,6 +493,76 @@ class PersonalTab(QWidget):
         value_label = card.findChild(QLabel, "card_value")
         if value_label:
             value_label.setText(value)
+
+    def _load_transactions_page(self):
+        """Load transactions for current page."""
+        if self.page_size == 0:  # Show all
+            transactions = self.db.get_all_transactions()
+        else:
+            offset = self.current_page * self.page_size
+            transactions = self.db.get_all_transactions(
+                limit=self.page_size, offset=offset
+            )
+
+        self._populate_table(transactions)
+
+    def _update_pagination_controls(self):
+        """Update pagination controls based on current state."""
+        if self.total_transactions <= self.page_size or self.page_size == 0:
+            self.pagination_widget.setVisible(False)
+            return
+
+        self.pagination_widget.setVisible(True)
+
+        total_pages = (self.total_transactions + self.page_size - 1) // self.page_size
+        current_page_display = self.current_page + 1
+
+        # Update page info
+        self.page_info_label.setText(f"Page {current_page_display} of {total_pages}")
+
+        # Update button states
+        self.first_btn.setEnabled(self.current_page > 0)
+        self.prev_btn.setEnabled(self.current_page > 0)
+        self.next_btn.setEnabled(self.current_page < total_pages - 1)
+        self.last_btn.setEnabled(self.current_page < total_pages - 1)
+
+    def _on_page_size_changed(self, size_text: str):
+        """Handle page size change."""
+        if size_text == "All":
+            self.page_size = 0
+        else:
+            self.page_size = int(size_text)
+
+        self.current_page = 0
+        self._load_data()
+
+    def _on_first_page(self):
+        """Go to first page."""
+        self.current_page = 0
+        self._load_transactions_page()
+        self._update_pagination_controls()
+
+    def _on_prev_page(self):
+        """Go to previous page."""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._load_transactions_page()
+            self._update_pagination_controls()
+
+    def _on_next_page(self):
+        """Go to next page."""
+        total_pages = (self.total_transactions + self.page_size - 1) // self.page_size
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self._load_transactions_page()
+            self._update_pagination_controls()
+
+    def _on_last_page(self):
+        """Go to last page."""
+        total_pages = (self.total_transactions + self.page_size - 1) // self.page_size
+        self.current_page = total_pages - 1
+        self._load_transactions_page()
+        self._update_pagination_controls()
 
     def _populate_table(self, transactions: List[Dict[str, Any]]):
         """Populate transaction table with data."""
@@ -585,6 +714,7 @@ class PersonalTab(QWidget):
 
     def refresh(self):
         """Public method to refresh the tab data."""
+        self.current_page = 0  # Reset to first page on refresh
         self._load_data()
 
     def _on_selection_changed(self):

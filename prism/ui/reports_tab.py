@@ -1,6 +1,6 @@
 """
 Reports tab for Prism application.
-Displays interactive charts and data visualization using Plotly.
+Displays interactive charts and data visualization using Plotly with caching and lazy loading.
 """
 
 from datetime import datetime, timedelta
@@ -19,8 +19,9 @@ from PyQt6.QtWidgets import (
     QDateEdit,
     QSplitter,
     QSizePolicy,
+    QProgressBar,
 )
-from PyQt6.QtCore import Qt, QDate, pyqtSignal
+from PyQt6.QtCore import Qt, QDate, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
@@ -41,7 +42,7 @@ from . import finary_themes  # Import the new theme
 
 
 class ReportsTab(QWidget):
-    """Reports and visualization tab widget."""
+    """Reports and visualization tab widget with chart caching and lazy loading."""
 
     # Signal emitted when data changes
     data_changed = pyqtSignal()
@@ -56,6 +57,19 @@ class ReportsTab(QWidget):
         """
         super().__init__(parent)
         self.db = db_manager
+
+        # Chart caching
+        self.chart_cache = {}
+        self.cache_timestamp = {}
+        from ..utils.config import get_config
+
+        self.cache_timeout = get_config().ui.chart_cache_timeout
+
+        # Lazy loading state
+        self.charts_loaded = False
+        self.is_visible = False
+        self.config = get_config()
+
         self._init_ui()
 
     def _init_ui(self):
@@ -94,8 +108,28 @@ class ReportsTab(QWidget):
         separator.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(separator)
 
-        # Splitter for charts (allows resizing)
+        # Loading indicator
+        self.loading_widget = QWidget()
+        loading_layout = QVBoxLayout(self.loading_widget)
+        loading_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        loading_label = QLabel("Loading charts...")
+        loading_label.setStyleSheet("font-size: 16px; color: #666;")
+        loading_layout.addWidget(loading_label)
+
+        self.loading_progress = QProgressBar()
+        self.loading_progress.setRange(0, 0)  # Indeterminate progress
+        if self.config.ui.show_loading_animations:
+            self.loading_progress.setVisible(True)
+        else:
+            self.loading_progress.setVisible(False)
+        loading_layout.addWidget(self.loading_progress)
+
+        layout.addWidget(self.loading_widget)
+
+        # Splitter for charts (allows resizing) - initially hidden
         self.chart_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.chart_splitter.setVisible(False)
 
         # Stock Charts Section
         self.stock_charts_widget = self._create_stock_charts_section()
@@ -107,8 +141,38 @@ class ReportsTab(QWidget):
 
         layout.addWidget(self.chart_splitter, 1)
 
-        # Load initial data
-        self._refresh_charts()
+        # Lazy load charts when tab becomes visible
+        self._setup_lazy_loading()
+
+    def _setup_lazy_loading(self):
+        """Set up lazy loading for charts."""
+        # Use a timer to check visibility after initialization
+        QTimer.singleShot(100, self._check_visibility)
+
+    def _check_visibility(self):
+        """Check if tab is visible and load charts if needed."""
+        if self.isVisible() and not self.charts_loaded:
+            self.is_visible = True
+            self._load_charts_lazy()
+
+    def showEvent(self, event):
+        """Handle show event for lazy loading."""
+        super().showEvent(event)
+        if not self.charts_loaded:
+            self.is_visible = True
+            self._load_charts_lazy()
+
+    def _load_charts_lazy(self):
+        """Load charts lazily when tab becomes visible."""
+        if self.charts_loaded:
+            return
+
+        # Show loading indicator
+        self.loading_widget.setVisible(True)
+        self.chart_splitter.setVisible(False)
+
+        # Load charts in background
+        QTimer.singleShot(100, self._refresh_charts)  # Small delay for UI update
 
     def _create_control_panel(self) -> QWidget:
         """Create control panel with filters and export options."""
@@ -245,6 +309,8 @@ class ReportsTab(QWidget):
         else:
             self.start_date_edit.setVisible(False)
             self.end_date_edit.setVisible(False)
+            # Clear cache when date range changes
+            self._clear_chart_cache()
             self._refresh_charts()
 
     def _get_date_range(self) -> tuple[Optional[str], Optional[str]]:
@@ -301,28 +367,97 @@ class ReportsTab(QWidget):
         return filtered
 
     def _refresh_charts(self):
-        """Refresh all charts with current data."""
+        """Refresh all charts with current data and caching."""
         try:
-            # Get data from database
-            assets = self.db.get_all_assets()
+            # Get data from database with pagination if large
+            if self.config.database.default_page_size > 0:
+                assets = self.db.get_all_assets(
+                    limit=self.config.database.max_page_size
+                )
+            else:
+                assets = self.db.get_all_assets()
 
-            # Generate charts
+            # Generate charts with caching
             self._create_stock_evolution_chart(assets)
             self._create_crypto_evolution_chart(assets)
 
+            # Mark as loaded and hide loading indicator
+            if not self.charts_loaded:
+                self.charts_loaded = True
+                self.loading_widget.setVisible(False)
+                self.chart_splitter.setVisible(True)
+
         except Exception as e:
+            # Hide loading on error
+            self.loading_widget.setVisible(False)
+            self.chart_splitter.setVisible(True)
             QMessageBox.critical(self, "Error", f"Failed to generate charts:\n{str(e)}")
 
+    def _get_cache_key(self, chart_type: str) -> str:
+        """Generate cache key for chart type and current filters."""
+        start_date, end_date = self._get_date_range()
+        date_range = self.date_range_combo.currentText()
+
+        if date_range == "Custom":
+            key = f"{chart_type}_{start_date}_{end_date}"
+        else:
+            key = f"{chart_type}_{date_range}"
+
+        return key
+
+    def _is_chart_cached(self, chart_type: str) -> bool:
+        """Check if chart is cached and still valid."""
+        cache_key = self._get_cache_key(chart_type)
+
+        if cache_key not in self.chart_cache:
+            return False
+
+        # Check cache timeout
+        if cache_key in self.cache_timestamp:
+            import time
+
+            if time.time() - self.cache_timestamp[cache_key] > self.cache_timeout:
+                return False
+
+        return True
+
+    def _get_cached_chart(self, chart_type: str) -> Optional[str]:
+        """Get cached chart HTML."""
+        if self._is_chart_cached(chart_type):
+            cache_key = self._get_cache_key(chart_type)
+            return self.chart_cache[cache_key]
+        return None
+
+    def _cache_chart(self, chart_type: str, html: str):
+        """Cache chart HTML."""
+        import time
+
+        cache_key = self._get_cache_key(chart_type)
+        self.chart_cache[cache_key] = html
+        self.cache_timestamp[cache_key] = time.time()
+
+    def _clear_chart_cache(self):
+        """Clear all chart cache."""
+        self.chart_cache.clear()
+        self.cache_timestamp.clear()
+
     def _create_stock_evolution_chart(self, assets: List[Dict[str, Any]]):
-        """Create stock investment evolution line chart."""
+        """Create stock investment evolution line chart with caching."""
+        # Check cache first
+        cached_html = self._get_cached_chart("stock")
+        if cached_html:
+            self.stock_chart_view.setHtml(cached_html)
+            return
+
         stock_assets = [a for a in assets if a["asset_type"] == "stock"]
 
         if not stock_assets:
-            self._show_empty_chart(
-                self.stock_chart_view,
+            html = self._get_empty_chart_html(
                 "No stock investment data available",
                 "Stock Investment Evolution (PEA)",
             )
+            self.stock_chart_view.setHtml(html)
+            self._cache_chart("stock", html)
             return
 
         start_date, end_date = self._get_date_range()
@@ -371,10 +506,8 @@ class ReportsTab(QWidget):
                 html = fig.to_html(
                     include_plotlyjs="cdn", config={"displayModeBar": True}
                 )
-                self.stock_chart_view.setHtml(html)
             else:
-                self._show_empty_chart(
-                    self.stock_chart_view,
+                html = self._get_empty_chart_html(
                     "No historical price data available.<br><br>"
                     "📊 <b>How to fix this:</b><br>"
                     "1. Go to <b>Investments</b> tab<br>"
@@ -384,52 +517,60 @@ class ReportsTab(QWidget):
                     "Historical prices will be fetched automatically.",
                     "Stock Investment Evolution (PEA)",
                 )
-            return
+        else:
+            # Sort the dates and create the lists for the chart
+            sorted_dates = sorted(portfolio_evolution.keys())
+            dates = sorted_dates
+            values = [portfolio_evolution[date] for date in sorted_dates]
 
-        # Sort the dates and create the lists for the chart
-        sorted_dates = sorted(portfolio_evolution.keys())
-        dates = sorted_dates
-        values = [portfolio_evolution[date] for date in sorted_dates]
+            # Create line chart
+            fig = go.Figure()
 
-        # Create line chart
-        fig = go.Figure()
-
-        fig.add_trace(
-            go.Scatter(
-                x=dates,
-                y=values,
-                mode="lines",
-                name="Stock Value",
-                line=dict(color="#007AFF", width=3),
-                fill="tozeroy",
-                fillcolor="rgba(0, 122, 255, 0.2)",
-                hovertemplate="<b>%{x}</b><br>€%{y:,.2f}<extra></extra>",
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=values,
+                    mode="lines",
+                    name="Stock Value",
+                    line=dict(color="#007AFF", width=3),
+                    fill="tozeroy",
+                    fillcolor="rgba(0, 122, 255, 0.2)",
+                    hovertemplate="<b>%{x}</b><br>€%{y:,.2f}<extra></extra>",
+                )
             )
-        )
 
-        fig.update_layout(
-            title="Stock Investment Evolution (PEA)<br><sub>Shows actual portfolio value based on purchase dates</sub>",
-            xaxis_title="Date",
-            yaxis_title="Value (€)",
-            hovermode="x unified",
-            autosize=True,
-            height=350,
-            margin=dict(t=70, l=10, r=10, b=40),
-        )
+            fig.update_layout(
+                title="Stock Investment Evolution (PEA)<br><sub>Shows actual portfolio value based on purchase dates</sub>",
+                xaxis_title="Date",
+                yaxis_title="Value (€)",
+                hovermode="x unified",
+                autosize=True,
+                height=350,
+                margin=dict(t=70, l=10, r=10, b=40),
+            )
 
-        html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
+            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
+
         self.stock_chart_view.setHtml(html)
+        self._cache_chart("stock", html)
 
     def _create_crypto_evolution_chart(self, assets: List[Dict[str, Any]]):
-        """Create crypto investment evolution line chart."""
+        """Create crypto investment evolution line chart with caching."""
+        # Check cache first
+        cached_html = self._get_cached_chart("crypto")
+        if cached_html:
+            self.crypto_chart_view.setHtml(cached_html)
+            return
+
         crypto_assets = [a for a in assets if a["asset_type"] == "crypto"]
 
         if not crypto_assets:
-            self._show_empty_chart(
-                self.crypto_chart_view,
+            html = self._get_empty_chart_html(
                 "No crypto investment data available",
                 "Crypto Investment Evolution",
             )
+            self.crypto_chart_view.setHtml(html)
+            self._cache_chart("crypto", html)
             return
 
         start_date, end_date = self._get_date_range()
@@ -478,10 +619,8 @@ class ReportsTab(QWidget):
                 html = fig.to_html(
                     include_plotlyjs="cdn", config={"displayModeBar": True}
                 )
-                self.crypto_chart_view.setHtml(html)
             else:
-                self._show_empty_chart(
-                    self.crypto_chart_view,
+                html = self._get_empty_chart_html(
                     "No historical price data available.<br><br>"
                     "📊 <b>How to fix this:</b><br>"
                     "1. Go to <b>Investments</b> tab<br>"
@@ -491,41 +630,60 @@ class ReportsTab(QWidget):
                     "Historical prices will be fetched automatically.",
                     "Crypto Investment Evolution",
                 )
-            return
+        else:
+            # Sort the dates and create the lists for the chart
+            sorted_dates = sorted(portfolio_evolution.keys())
+            dates = sorted_dates
+            values = [portfolio_evolution[date] for date in sorted_dates]
 
-        # Sort the dates and create the lists for the chart
-        sorted_dates = sorted(portfolio_evolution.keys())
-        dates = sorted_dates
-        values = [portfolio_evolution[date] for date in sorted_dates]
+            # Create line chart
+            fig = go.Figure()
 
-        # Create line chart
-        fig = go.Figure()
-
-        fig.add_trace(
-            go.Scatter(
-                x=dates,
-                y=values,
-                mode="lines",
-                name="Crypto Value",
-                line=dict(color="#FF9500", width=3),
-                fill="tozeroy",
-                fillcolor="rgba(255, 149, 0, 0.2)",
-                hovertemplate="<b>%{x}</b><br>€%{y:,.2f}<extra></extra>",
+            fig.add_trace(
+                go.Scatter(
+                    x=dates,
+                    y=values,
+                    mode="lines",
+                    name="Crypto Value",
+                    line=dict(color="#FF9500", width=3),
+                    fill="tozeroy",
+                    fillcolor="rgba(255, 149, 0, 0.2)",
+                    hovertemplate="<b>%{x}</b><br>€%{y:,.2f}<extra></extra>",
+                )
             )
-        )
 
-        fig.update_layout(
-            title="Crypto Investment Evolution<br><sub>Shows actual portfolio value based on purchase dates</sub>",
-            xaxis_title="Date",
-            yaxis_title="Value (€)",
-            hovermode="x unified",
-            autosize=True,
-            height=350,
-            margin=dict(t=70, l=10, r=10, b=40),
-        )
+            fig.update_layout(
+                title="Crypto Investment Evolution<br><sub>Shows actual portfolio value based on purchase dates</sub>",
+                xaxis_title="Date",
+                yaxis_title="Value (€)",
+                hovermode="x unified",
+                autosize=True,
+                height=350,
+                margin=dict(t=70, l=10, r=10, b=40),
+            )
 
-        html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
+            html = fig.to_html(include_plotlyjs="cdn", config={"displayModeBar": True})
+
         self.crypto_chart_view.setHtml(html)
+        self._cache_chart("crypto", html)
+
+    def _get_empty_chart_html(self, message: str, title: str) -> str:
+        """Generate HTML for empty chart state."""
+        html = f"""
+        <div style="display: flex; justify-content: center; align-items: center; height: 350px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            <div style="text-align: center; color: #666;">
+                <div style="font-size: 48px; margin-bottom: 16px;">📊</div>
+                <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">{title}</div>
+                <div style="font-size: 14px; line-height: 1.5;">{message}</div>
+            </div>
+        </div>
+        """
+        return html
+
+    def _show_empty_chart(self, view: QWebEngineView, message: str, title: str):
+        """Show empty chart in web view (legacy method for compatibility)."""
+        html = self._get_empty_chart_html(message, title)
+        view.setHtml(html)
 
     def _export_transactions(self):
         """Export transactions to CSV."""
@@ -599,4 +757,6 @@ class ReportsTab(QWidget):
 
     def refresh(self):
         """Public method to refresh the tab data."""
+        # Clear cache when explicitly refreshing
+        self._clear_chart_cache()
         self._refresh_charts()

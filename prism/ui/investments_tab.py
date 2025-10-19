@@ -34,6 +34,7 @@ from ..database.trading_operations import TradingManager
 from ..api.crypto_api import CryptoAPI
 from ..api.stock_api import StockAPI
 from ..utils.ticker_data import get_ticker_suggestions, extract_ticker
+from ..utils.config import get_ui_page_size
 from .sell_asset_dialog import SellAssetDialog
 
 
@@ -60,7 +61,7 @@ class AssetsTable(QTableWidget):
 
 
 class PriceUpdateWorker(QThread):
-    """Worker thread for updating asset prices."""
+    """Worker thread for updating asset prices with async optimization."""
 
     finished = pyqtSignal(dict)
     progress = pyqtSignal(int, str)
@@ -72,7 +73,9 @@ class PriceUpdateWorker(QThread):
         self.stock_api = stock_api
 
     def run(self):
-        """Update prices in background thread."""
+        """Update prices in background thread with optimized async calls."""
+        import asyncio
+
         results = {"updated": 0, "failed": 0, "total": 0, "errors": []}
 
         try:
@@ -84,29 +87,32 @@ class PriceUpdateWorker(QThread):
                 self.finished.emit(results)
                 return
 
-            # Update current prices
-            crypto_tickers = [
-                a["ticker"] for a in assets if a["asset_type"] == "crypto"
-            ]
-            stock_tickers = [
-                a["ticker"] for a in assets if a["asset_type"] in ["stock", "bond"]
-            ]
+            # Group assets by type for batch processing
+            crypto_assets = [a for a in assets if a["asset_type"] == "crypto"]
+            stock_assets = [a for a in assets if a["asset_type"] in ["stock", "bond"]]
 
-            if crypto_tickers:
-                crypto_prices = self.crypto_api.get_multiple_prices_usd(crypto_tickers)
-            if stock_tickers:
-                stock_prices = self.stock_api.get_multiple_prices(stock_tickers)
+            # Update current prices using async batch calls
+            crypto_prices = {}
+            stock_prices = {}
 
+            # Run async price fetching
+            asyncio.run(
+                self._fetch_all_prices_async(
+                    crypto_assets, stock_assets, crypto_prices, stock_prices
+                )
+            )
+
+            # Update database with fetched prices
             for i, asset in enumerate(assets):
                 self.progress.emit(
-                    int((i / len(assets)) * 100), f"Updating {asset['ticker']}..."
+                    int((i / len(assets)) * 50), f"Updating {asset['ticker']}..."
                 )
 
                 # Update current price
                 price = None
-                if asset["asset_type"] == "crypto" and crypto_tickers:
+                if asset["asset_type"] == "crypto":
                     price = crypto_prices.get(asset["ticker"])
-                elif asset["asset_type"] in ["stock", "bond"] and stock_tickers:
+                elif asset["asset_type"] in ["stock", "bond"]:
                     price = stock_prices.get(asset["ticker"])
 
                 if price:
@@ -116,30 +122,8 @@ class PriceUpdateWorker(QThread):
                     results["failed"] += 1
                     results["errors"].append(asset["ticker"])
 
-                # Fetch and store historical prices
-                last_date_str = self.db.get_last_historical_price_date(asset["id"])
-                days_to_fetch = 365  # Default to 1 year
-                if last_date_str:
-                    last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
-                    days_to_fetch = (datetime.now() - last_date).days
-
-                if days_to_fetch > 0:
-                    historical_prices = None
-                    if asset["asset_type"] == "crypto":
-                        historical_prices = self.crypto_api.get_historical_price(
-                            asset["ticker"], "usd", days_to_fetch
-                        )
-                    elif asset["asset_type"] == "stock":
-                        hist_data = self.stock_api.get_historical_data(
-                            asset["ticker"], f"{days_to_fetch}d", "1d"
-                        )
-                        if hist_data:
-                            historical_prices = list(
-                                zip(hist_data["dates"], hist_data["close"])
-                            )
-
-                    if historical_prices:
-                        self.db.add_historical_prices(asset["id"], historical_prices)
+            # Fetch historical prices in parallel batches
+            self._fetch_historical_prices_batch(assets, results)
 
             self.progress.emit(100, "Complete")
 
@@ -148,6 +132,141 @@ class PriceUpdateWorker(QThread):
             results["errors"].append(f"An unexpected error occurred: {e}")
 
         self.finished.emit(results)
+
+    async def _fetch_all_prices_async(
+        self, crypto_assets, stock_assets, crypto_prices, stock_prices
+    ):
+        """Fetch all prices asynchronously in parallel."""
+        import asyncio
+
+        tasks = []
+
+        # Crypto prices task
+        if crypto_assets:
+            crypto_tickers = [a["ticker"] for a in crypto_assets]
+            tasks.append(self._fetch_crypto_prices_async(crypto_tickers, crypto_prices))
+
+        # Stock prices task
+        if stock_assets:
+            stock_tickers = [a["ticker"] for a in stock_assets]
+            tasks.append(self._fetch_stock_prices_async(stock_tickers, stock_prices))
+
+        # Run all tasks concurrently
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _fetch_crypto_prices_async(self, tickers, results_dict):
+        """Fetch crypto prices asynchronously."""
+        try:
+            prices = await self.crypto_api.get_multiple_prices_usd_async(tickers)
+            results_dict.update(prices)
+        except Exception as e:
+            print(f"Error fetching crypto prices: {e}")
+            # Fallback to sync method
+            prices = self.crypto_api.get_multiple_prices_usd(tickers)
+            results_dict.update(prices)
+
+    async def _fetch_stock_prices_async(self, tickers, results_dict):
+        """Fetch stock prices asynchronously."""
+        try:
+            # Note: Stock API might not have async methods, so we run sync in thread
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(self.stock_api.get_multiple_prices, tickers)
+                prices = future.result(timeout=30)  # 30 second timeout
+                results_dict.update(prices)
+        except Exception as e:
+            print(f"Error fetching stock prices: {e}")
+            # Fallback to sync method
+            prices = self.stock_api.get_multiple_prices(tickers)
+            results_dict.update(prices)
+
+    def _fetch_historical_prices_batch(self, assets, results):
+        """Fetch historical prices in optimized batches."""
+        import concurrent.futures
+
+        # Group assets by type
+        crypto_assets = [a for a in assets if a["asset_type"] == "crypto"]
+        stock_assets = [a for a in assets if a["asset_type"] in ["stock", "bond"]]
+
+        total_assets = len(assets)
+        completed = 0
+
+        # Process crypto historical data
+        if crypto_assets:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                futures = []
+                for asset in crypto_assets:
+                    future = executor.submit(self._fetch_single_historical, asset)
+                    futures.append(future)
+
+                for future in concurrent.futures.as_completed(futures):
+                    completed += 1
+                    self.progress.emit(
+                        50 + int((completed / total_assets) * 50),
+                        f"Fetching historical data... ({completed}/{total_assets})",
+                    )
+                    try:
+                        future.result(timeout=10)  # 10 second timeout per asset
+                    except Exception as e:
+                        print(f"Error fetching historical data: {e}")
+
+        # Process stock historical data
+        if stock_assets:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                futures = []
+                for asset in stock_assets:
+                    future = executor.submit(self._fetch_single_historical, asset)
+                    futures.append(future)
+
+                for future in concurrent.futures.as_completed(futures):
+                    completed += 1
+                    self.progress.emit(
+                        50 + int((completed / total_assets) * 50),
+                        f"Fetching historical data... ({completed}/{total_assets})",
+                    )
+                    try:
+                        future.result(timeout=15)  # 15 second timeout for stocks
+                    except Exception as e:
+                        print(f"Error fetching historical data: {e}")
+
+    def _fetch_single_historical(self, asset):
+        """Fetch historical prices for a single asset."""
+        try:
+            # Check what data we already have
+            last_date_str = self.db.get_last_historical_price_date(asset["id"])
+            days_to_fetch = 365  # Default to 1 year
+            if last_date_str:
+                last_date = datetime.strptime(last_date_str, "%Y-%m-%d")
+                days_to_fetch = (datetime.now() - last_date).days
+
+            if days_to_fetch <= 1:  # Already up to date
+                return
+
+            historical_prices = None
+            if asset["asset_type"] == "crypto":
+                # Limit to prevent API abuse
+                days_to_fetch = min(days_to_fetch, 365)
+                historical_prices = self.crypto_api.get_historical_price(
+                    asset["ticker"], "usd", days_to_fetch
+                )
+            elif asset["asset_type"] in ["stock", "bond"]:
+                # Limit to prevent API abuse
+                days_to_fetch = min(days_to_fetch, 180)  # 6 months for stocks
+                hist_data = self.stock_api.get_historical_data(
+                    asset["ticker"], f"{days_to_fetch}d", "1d"
+                )
+                if hist_data and "dates" in hist_data and "close" in hist_data:
+                    historical_prices = list(
+                        zip(hist_data["dates"], hist_data["close"])
+                    )
+
+            if historical_prices:
+                self.db.add_historical_prices(asset["id"], historical_prices)
+
+        except Exception as e:
+            print(f"Error fetching historical data for {asset['ticker']}: {e}")
 
 
 class AssetDialog(QDialog):
@@ -473,8 +592,13 @@ class AssetDialog(QDialog):
         # Cryptos ALWAYS use USD, stocks/bonds use EUR
         price_currency = "USD" if asset_type == "crypto" else "EUR"
 
+        ticker_text = self.ticker_edit.text().strip()
+        ticker = (
+            extract_ticker(ticker_text) if " - " in ticker_text else ticker_text.upper()
+        )
+
         return {
-            "ticker": self.ticker_edit.text().strip().upper(),
+            "ticker": ticker,
             "quantity": float(self.quantity_edit.text()),
             "price_buy": float(self.buy_price_edit.text()),
             "date_buy": date_str,
@@ -602,9 +726,18 @@ class InvestmentsTab(QWidget):
         separator.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(separator)
 
+        # Pagination controls
+        self._create_pagination_controls()
+        layout.addWidget(self.pagination_widget)
+
         # Assets table
         self._create_assets_table()
         layout.addWidget(self.assets_table, 1)
+
+        # Initialize pagination state
+        self.current_page = 0
+        self.page_size = get_ui_page_size("investments")  # Configurable page size
+        self.total_assets = 0
 
     def _create_summary_section(self) -> QWidget:
         """Create summary cards section."""
@@ -717,6 +850,49 @@ class InvestmentsTab(QWidget):
         self.assets_table.itemSelectionChanged.connect(self._on_selection_changed)
         self.assets_table.delete_selected.connect(self._on_delete_selected)
 
+    def _create_pagination_controls(self):
+        """Create pagination controls widget."""
+        self.pagination_widget = QWidget()
+        layout = QHBoxLayout(self.pagination_widget)
+        layout.setContentsMargins(0, 10, 0, 10)
+
+        # Page size selector
+        layout.addWidget(QLabel("Show:"))
+        self.page_size_combo = QComboBox()
+        self.page_size_combo.addItems(["25", "50", "100", "All"])
+        self.page_size_combo.setCurrentText("50")
+        self.page_size_combo.currentTextChanged.connect(self._on_page_size_changed)
+        layout.addWidget(self.page_size_combo)
+
+        layout.addStretch()
+
+        # Navigation buttons
+        self.first_btn = QPushButton("⏮️ First")
+        self.first_btn.clicked.connect(self._on_first_page)
+        self.first_btn.setEnabled(False)
+        layout.addWidget(self.first_btn)
+
+        self.prev_btn = QPushButton("◀️ Previous")
+        self.prev_btn.clicked.connect(self._on_prev_page)
+        self.prev_btn.setEnabled(False)
+        layout.addWidget(self.prev_btn)
+
+        # Page info
+        self.page_info_label = QLabel("Page 1 of 1")
+        layout.addWidget(self.page_info_label)
+
+        self.next_btn = QPushButton("Next ▶️")
+        self.next_btn.clicked.connect(self._on_next_page)
+        self.next_btn.setEnabled(False)
+        layout.addWidget(self.next_btn)
+
+        self.last_btn = QPushButton("Last ⏭️")
+        self.last_btn.clicked.connect(self._on_last_page)
+        self.last_btn.setEnabled(False)
+        layout.addWidget(self.last_btn)
+
+        self.pagination_widget.setVisible(False)  # Hidden by default
+
     def _load_data(self):
         """Load data from database and update UI."""
         try:
@@ -737,12 +913,15 @@ class InvestmentsTab(QWidget):
                 self.gain_card, f"{gain_symbol}€{total_gain:,.2f}", gain_color
             )
 
-            # Get all assets
-            assets = self.db.get_all_assets()
-            self._update_card_value(self.count_card, str(len(assets)))
+            # Get total asset count
+            self.total_assets = self.db.get_asset_count()
+            self._update_card_value(self.count_card, str(self.total_assets))
 
-            # Update table
-            self._populate_table(assets)
+            # Update pagination controls
+            self._update_pagination_controls()
+
+            # Load paginated assets
+            self._load_assets_page()
 
         except Exception as e:
             QMessageBox.critical(
@@ -761,6 +940,74 @@ class InvestmentsTab(QWidget):
                 value_label.setStyleSheet(
                     f"font-size: 24px; font-weight: bold; color: {color};"
                 )
+
+    def _load_assets_page(self):
+        """Load assets for current page."""
+        if self.page_size == 0:  # Show all
+            assets = self.db.get_all_assets()
+        else:
+            offset = self.current_page * self.page_size
+            assets = self.db.get_all_assets(limit=self.page_size, offset=offset)
+
+        self._populate_table(assets)
+
+    def _update_pagination_controls(self):
+        """Update pagination controls based on current state."""
+        if self.total_assets <= self.page_size or self.page_size == 0:
+            self.pagination_widget.setVisible(False)
+            return
+
+        self.pagination_widget.setVisible(True)
+
+        total_pages = (self.total_assets + self.page_size - 1) // self.page_size
+        current_page_display = self.current_page + 1
+
+        # Update page info
+        self.page_info_label.setText(f"Page {current_page_display} of {total_pages}")
+
+        # Update button states
+        self.first_btn.setEnabled(self.current_page > 0)
+        self.prev_btn.setEnabled(self.current_page > 0)
+        self.next_btn.setEnabled(self.current_page < total_pages - 1)
+        self.last_btn.setEnabled(self.current_page < total_pages - 1)
+
+    def _on_page_size_changed(self, size_text: str):
+        """Handle page size change."""
+        if size_text == "All":
+            self.page_size = 0
+        else:
+            self.page_size = int(size_text)
+
+        self.current_page = 0
+        self._load_data()
+
+    def _on_first_page(self):
+        """Go to first page."""
+        self.current_page = 0
+        self._load_assets_page()
+        self._update_pagination_controls()
+
+    def _on_prev_page(self):
+        """Go to previous page."""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._load_assets_page()
+            self._update_pagination_controls()
+
+    def _on_next_page(self):
+        """Go to next page."""
+        total_pages = (self.total_assets + self.page_size - 1) // self.page_size
+        if self.current_page < total_pages - 1:
+            self.current_page += 1
+            self._load_assets_page()
+            self._update_pagination_controls()
+
+    def _on_last_page(self):
+        """Go to last page."""
+        total_pages = (self.total_assets + self.page_size - 1) // self.page_size
+        self.current_page = total_pages - 1
+        self._load_assets_page()
+        self._update_pagination_controls()
 
     def _populate_table(self, assets: List[Dict[str, Any]]):
         """Populate assets table with data."""
@@ -1098,6 +1345,11 @@ class InvestmentsTab(QWidget):
         # Reload data
         self._load_data()
         self.data_changed.emit()
+
+    def refresh(self):
+        """Public method to refresh the tab data."""
+        self.current_page = 0  # Reset to first page on refresh
+        self._load_data()
 
     def _on_sell_asset(self):
         """Handle sell asset button click."""
